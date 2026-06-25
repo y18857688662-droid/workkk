@@ -436,10 +436,11 @@ def work_action(action: str, thought: str) -> dict:
     if event:
         _s["last_event"] = event
 
-    _s["day_actions"] += 1
     day_msg = ""
-    if _s["day_actions"] >= _s["day_target"]:
-        day_msg = _end_of_day()
+    if action != "get_status":
+        _s["day_actions"] += 1
+        if _s["day_actions"] >= _s["day_target"]:
+            day_msg = _end_of_day()
 
     _s["log"].append(f"[{ts}] {action} → {event or '正常'}")
     _s["log"] = _s["log"][-20:]
@@ -1026,6 +1027,24 @@ body{
   0%  {transform:translateY(100vh) scale(.8);opacity:.9}
   100%{transform:translateY(-120px) scale(1.1);opacity:0}
 }
+/* ── character animations ── */
+@keyframes sway   {0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
+@keyframes shake  {0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}40%{transform:translateX(5px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
+@keyframes wobble {0%,100%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}}
+@keyframes bounce {0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+@keyframes floatY {0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+@keyframes wiggle {0%,100%{transform:rotate(0deg)}25%{transform:rotate(-2deg)}75%{transform:rotate(2deg)}}
+.anim-sway   {animation:sway    0.6s ease-in-out infinite}
+.anim-shake  {animation:shake   0.35s ease-in-out infinite}
+.anim-wobble {animation:wobble  1.8s ease-in-out infinite}
+.anim-bounce {animation:bounce  0.55s ease-in-out infinite}
+.anim-float  {animation:floatY  2.2s ease-in-out infinite}
+.anim-wiggle {animation:wiggle  0.5s ease-in-out infinite}
+.dim{filter:brightness(0.65)}
+/* debug bubble question marks float */
+.bubble-q span{display:inline-block;animation:floatY 1s ease-in-out infinite}
+.bubble-q span:nth-child(2){animation-delay:.2s}
+.bubble-q span:nth-child(3){animation-delay:.4s}
 </style>
 </head>
 <body>
@@ -1170,23 +1189,34 @@ body{
 </div>
 
 <script>
-// ═══ Status → bubble ════════════════════════════════════════════════════════
-var BUBBLE_MAP = {
-  'write_code':      '💭 敲代码中...',
-  'debug':           '❓❓❓',
-  'slack_off':       '📱 摸了',
-  'buy_coffee':      '☕',
-  'attend_meeting':  '😑',
-  '下班':            '💤',
-  'get_status':      '👀',
-};
-function statusToBubble(s){
-  s = s || '';
-  for(var k in BUBBLE_MAP){
-    if(s.indexOf(k)>=0 || s.indexOf(BUBBLE_MAP[k])>=0) return BUBBLE_MAP[k];
-  }
-  if(s.indexOf('下班')>=0 || s.indexOf('结束')>=0) return '💤';
-  if(s.indexOf('趴')>=0)  return '😵';
+// ═══ Status helpers ══════════════════════════════════════════════════════════
+function matchStatus(s, keys){ return keys.some(function(k){return s.indexOf(k)>=0;}); }
+
+function getBubble(status, mood, energy){
+  var s=status||'', t='', isDebug=false;
+  if     (matchStatus(s,['敲代码','write_code']))     t='💻 啪啪啪...';
+  else if(matchStatus(s,['修Bug','debug','Debug']))   { t='❓❓❓'; isDebug=true; }
+  else if(matchStatus(s,['摸鱼','slack_off']))         t='📱 嘿嘿';
+  else if(matchStatus(s,['咖啡','buy_coffee']))        t='☕ 买咖啡去咯';
+  else if(matchStatus(s,['开会','attend_meeting']))    t='😑 ...';
+  else if(matchStatus(s,['消息','check_messages']))    t='👀';
+  else if(matchStatus(s,['下班','结束']))              t='💤 下班啦';
+  else if(matchStatus(s,['趴']))                       t='😵 动不了...';
+  if(!t) return {text:'', debug:false};
+  if(mood<50)   t+=' 😢';
+  if(energy<30) t+=' ...好累';
+  return {text:t, debug:isDebug};
+}
+
+function getAnimClass(status, energy){
+  var s=status||'';
+  if(matchStatus(s,['敲代码','write_code']))   return 'anim-sway';
+  if(matchStatus(s,['修Bug','debug','Debug'])) return 'anim-shake';
+  if(matchStatus(s,['摸鱼','slack_off']))       return 'anim-wobble';
+  if(matchStatus(s,['咖啡','buy_coffee']))      return 'anim-bounce';
+  if(matchStatus(s,['开会','attend_meeting']))  return '';
+  if(matchStatus(s,['消息','check_messages'])) return 'anim-wiggle';
+  if(matchStatus(s,['下班','结束']))            return 'anim-float';
   return '';
 }
 
@@ -1324,11 +1354,32 @@ async function poll(){
     document.getElementById('b-id').textContent   = '工号：'+(d.worker_id  ||'未登记');
     document.getElementById('b-day').textContent  = '在职第'+d.day_count+'天';
 
-    // bubble
+    // bubble + animation
     var bubble = document.getElementById('bubble');
-    var btext  = statusToBubble(d.current_status);
-    if(btext){ bubble.textContent=btext; bubble.classList.add('show'); }
-    else      { bubble.classList.remove('show'); }
+    var img    = document.getElementById('clawd-img');
+    var fb     = document.getElementById('clawd-fb');
+    var binfo  = getBubble(d.current_status, d.mood, d.energy);
+    if(binfo.text){
+      if(binfo.debug){
+        bubble.innerHTML='<span class="bubble-q"><span>❓</span><span>❓</span><span>❓</span></span>';
+        if(d.mood<50)   bubble.innerHTML+=' 😢';
+        if(d.energy<30) bubble.innerHTML+=' ...好累';
+      } else {
+        bubble.textContent = binfo.text;
+      }
+      bubble.classList.add('show');
+    } else {
+      bubble.classList.remove('show');
+    }
+    // character animation
+    var anim = getAnimClass(d.current_status, d.energy);
+    var allAnims = ['anim-sway','anim-shake','anim-wobble','anim-bounce','anim-float','anim-wiggle'];
+    allAnims.forEach(function(c){ img.classList.remove(c); fb.classList.remove(c); });
+    if(anim){ img.classList.add(anim); fb.classList.add(anim); }
+    // energy dim
+    var dimmed = d.energy < 30;
+    img.classList.toggle('dim', dimmed);
+    fb.classList.toggle('dim', dimmed);
 
     // progress caps
     renderCaps(d.day_actions||0, d.day_target||4);
