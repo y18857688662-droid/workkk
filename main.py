@@ -361,206 +361,730 @@ async def home():
     return HTMLResponse(_DASHBOARD)
 
 
+
 _DASHBOARD = r"""<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI打工人监控系统</title>
+<title>WORKER-001 / 小机</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --g:#00ff41;--c:#00d4ff;--r:#ff3333;--y:#ffcc00;
-  --bg:#070707;--panel:#0c0c0c;
-}
 body{
-  background:var(--bg);color:var(--g);
-  font-family:'Courier New',monospace;
-  min-height:100vh;padding:14px;overflow-x:hidden;
+  background:#0f0f23;color:#e0e0ff;
+  font-family:'Press Start 2P',monospace;font-size:8px;
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  padding:12px 8px;line-height:1.6;
 }
-/* CRT scanline overlay */
-body::before{
-  content:'';position:fixed;inset:0;
-  background:repeating-linear-gradient(
-    0deg,transparent,transparent 2px,
-    rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px
-  );
-  pointer-events:none;z-index:9999;
-}
-/* Vignette */
-body::after{
-  content:'';position:fixed;inset:0;
-  background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,.6) 100%);
-  pointer-events:none;z-index:9998;
-}
-.hdr{
+/* ── Title bar ── */
+.titlebar{
+  width:100%;max-width:480px;
+  background:#12122e;
+  border:3px solid #3a3a8a;border-bottom:none;
+  padding:8px 12px;
   display:flex;justify-content:space-between;align-items:center;
-  border-bottom:1px solid var(--g);padding-bottom:8px;margin-bottom:14px;
 }
-.hdr-title{font-size:1.1rem;letter-spacing:.2em;text-transform:uppercase}
-.blink{animation:blink 1s step-end infinite}
+.game-title{color:#ffee44;font-size:9px;letter-spacing:.05em}
+.sub-title{color:#5555aa;font-size:6px;margin-top:5px}
+.rec{display:flex;align-items:center;gap:5px;color:#ff4444}
+.rec-dot{width:8px;height:8px;background:#ff4444;animation:blink 1s step-end infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.panel{
-  background:var(--panel);border:1px solid #1c1c1c;
-  padding:14px 16px;position:relative;
+.clk{color:#3a3a8a;font-size:7px;margin-top:4px;text-align:right}
+/* ── Scene ── */
+.scene{
+  width:100%;max-width:480px;height:240px;
+  position:relative;overflow:hidden;
+  border:3px solid #3a3a8a;
+  image-rendering:pixelated;
 }
-.panel::before{
-  content:attr(data-label);
-  position:absolute;top:-8px;left:12px;
-  background:var(--panel);padding:0 6px;
-  font-size:.58rem;color:var(--c);letter-spacing:.14em;
+.bg-office {background:linear-gradient(to bottom,#0d0d28 55%,#1a1408 55%)}
+.bg-outside{background:linear-gradient(to bottom,#060818 65%,#0d1a06 65%)}
+.bg-meeting{background:linear-gradient(to bottom,#0a0d28 55%,#12101e 55%)}
+/* pixel scanlines on scene */
+.scene::before{
+  content:'';position:absolute;inset:0;z-index:10;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.15) 3px,rgba(0,0,0,.15) 4px);
 }
-/* corner marks */
-.panel::after{
-  content:'';position:absolute;bottom:5px;right:5px;
-  width:10px;height:10px;
-  border-bottom:1px solid #2a2a2a;border-right:1px solid #2a2a2a;
+.scene-lbl{
+  position:absolute;top:6px;left:8px;z-index:5;
+  color:#22226a;font-size:6px;letter-spacing:.1em;
 }
-.big{
-  font-size:1.9rem;color:var(--c);text-align:center;
-  padding:12px 0;min-height:64px;
-  display:flex;align-items:center;justify-content:center;
-  text-shadow:0 0 14px rgba(0,212,255,.45);
-  word-break:break-all;line-height:1.2;
+/* desk */
+.bg-desk{
+  position:absolute;bottom:28px;
+  left:calc(50% - 80px);width:200px;height:10px;
+  background:#8a5522;
+  border-top:3px solid #bb8844;
+  border-bottom:2px solid #552200;
+  box-shadow:0 12px 0 #221100;
 }
-.bar-row{margin:9px 0}
-.bar-lbl{
-  display:flex;justify-content:space-between;
-  font-size:.68rem;color:#555;margin-bottom:4px;
+/* monitor */
+.bg-monitor{
+  position:absolute;bottom:38px;right:52px;
+  width:52px;height:42px;
+  background:#3a3a3a;border:2px solid #1a1a1a;
 }
-.bar-track{height:13px;background:#0e0e0e;border:1px solid #1c1c1c;overflow:hidden}
-.bar-fill{height:100%;transition:width .6s ease,background .6s ease}
-.thought{
-  font-size:.85rem;color:#999;font-style:italic;
-  padding:9px 12px;border-left:2px solid var(--y);
-  min-height:42px;word-break:break-all;line-height:1.5;
+.bg-monitor::before{
+  content:'';position:absolute;
+  top:4px;left:4px;right:4px;bottom:6px;
+  background:#001800;border:1px solid #002800;
 }
-.thought::before{content:'\201C';color:var(--y);font-style:normal}
-.thought::after{content:'\201D';color:var(--y);font-style:normal}
-.event{
-  font-size:.78rem;padding:7px 10px;margin-top:10px;
-  color:var(--r);border:1px solid #2b0000;background:#100000;
-  min-height:32px;word-break:break-all;line-height:1.4;
+.bg-monitor::after{
+  content:'> _';font-family:"Press Start 2P",monospace;font-size:5px;
+  position:absolute;top:10px;left:8px;color:#33ff66;
+  animation:blink .9s step-end infinite;
 }
-.log-wrap{grid-column:1/-1}
-.log{list-style:none;max-height:170px;overflow-y:auto}
-.log li{font-size:.68rem;color:#3d3d3d;padding:4px 0;border-bottom:1px solid #111}
-.log li:first-child{color:#6a6a6a}
-.stat-row{margin-top:12px;display:flex;gap:24px}
-.sv{font-size:1.4rem;color:var(--y)}
-.sl{font-size:.58rem;color:#444;letter-spacing:.1em;margin-top:2px}
-.rec{display:inline-flex;align-items:center;gap:5px;font-size:.62rem;color:var(--r)}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--r)}
-.ts{font-size:.62rem;color:#2a2a2a}
-.cam{position:fixed;font-size:.52rem;color:#161616;letter-spacing:.05em}
-.cam.tl{top:7px;left:7px}.cam.tr{top:7px;right:7px}
-.cam.bl{bottom:7px;left:7px}.cam.br{bottom:7px;right:7px}
-@media(max-width:560px){
-  .grid{grid-template-columns:1fr}
-  .log-wrap{grid-column:1}
-  .big{font-size:1.35rem}
+.bg-monitor-stand{
+  position:absolute;bottom:24px;right:72px;
+  width:12px;height:14px;background:#2a2a2a;
+}
+/* meeting table */
+.bg-table{
+  position:absolute;bottom:28px;left:8%;width:84%;height:12px;
+  background:#663300;border-top:3px solid #996633;border-bottom:2px solid #441100;
+}
+/* coffee shop counter */
+.bg-counter{
+  position:absolute;bottom:28px;right:20px;width:80px;height:14px;
+  background:#4a3010;border-top:3px solid #886622;
+}
+/* street lamp */
+.bg-lamp{
+  position:absolute;bottom:28px;left:40px;width:6px;height:80px;
+  background:#222222;
+}
+.bg-lamp::after{
+  content:'';position:absolute;top:0;left:-10px;width:26px;height:6px;
+  background:#332200;border-radius:3px 3px 0 0;
+  box-shadow:0 -4px 8px #ffcc44,0 -2px 0 #ffdd66;
+}
+/* effect / floating icons */
+.effect{
+  position:absolute;top:55px;right:70px;z-index:6;
+  font-size:14px;
+  animation:floatBob 1.2s ease-in-out infinite alternate;
+}
+@keyframes floatBob{0%{transform:translateY(0)}100%{transform:translateY(-10px)}}
+/* sprite */
+.sprite-wrap{
+  position:absolute;bottom:28px;
+  left:calc(50% - 52px);
+  width:104px;height:144px;
+  z-index:4;
+}
+#sprite{width:1px;height:1px;position:absolute;top:0;left:0;image-rendering:pixelated}
+/* ── Status bar ── */
+.status-bar{
+  width:100%;max-width:480px;
+  background:#0e0e28;border:3px solid #3a3a8a;border-top:none;
+  padding:7px 12px;
+}
+.status-txt{color:#44ffaa;font-size:8px;text-align:center;letter-spacing:.04em}
+/* ── Stats ── */
+.stats{
+  width:100%;max-width:480px;
+  background:#0c0c22;border:3px solid #3a3a8a;border-top:none;
+  padding:10px 12px;
+}
+.stat-row{display:flex;align-items:center;gap:8px;margin:7px 0}
+.stat-lbl{width:70px;color:#6666aa;font-size:7px;flex-shrink:0}
+.bar-wrap{flex:1;height:12px;background:#0a0a20;border:2px solid #2a2a6a;position:relative;overflow:hidden}
+.bar-fill{
+  height:100%;transition:width .4s steps(8);
+  background-image:repeating-linear-gradient(90deg,rgba(255,255,255,.1) 0,rgba(255,255,255,.1) 6px,transparent 6px,transparent 8px);
+}
+.bar-mood  {background-color:#cc3366}
+.bar-energy{background-color:#3366cc}
+.bar-skill {background-color:#cc8833}
+.stat-val{width:40px;color:#ffff88;font-size:7px;text-align:right;flex-shrink:0}
+/* ── Dialog box ── */
+.dialog{
+  width:100%;max-width:480px;
+  background:#080818;border:3px solid #3a3a8a;border-top:none;
+  padding:10px 12px;
+}
+.dlg-box{
+  background:#0e0e2e;border:2px solid #5555aa;padding:8px 10px;
+  position:relative;min-height:44px;
+}
+.dlg-box::after{
+  content:'▼';position:absolute;bottom:5px;right:8px;
+  color:#5555aa;font-size:7px;animation:blink .7s step-end infinite;
+}
+.dlg-name{color:#ffdd44;font-size:7px;margin-bottom:6px}
+#thought{color:#ccccff;font-size:7px;line-height:1.9;word-break:break-all;min-height:14px}
+/* cursor when typing */
+.typing::after{content:'|';animation:blink .5s step-end infinite;color:#8888ff}
+/* ── Log ── */
+.logbox{
+  width:100%;max-width:480px;
+  background:#080818;border:3px solid #3a3a8a;border-top:none;
+  padding:8px 12px;
+}
+.log-hdr{color:#3a3a8a;font-size:7px;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #1a1a4a}
+#log{list-style:none}
+#log li{color:#444488;font-size:6px;padding:3px 0;border-bottom:1px dotted #111133}
+#log li:first-child{color:#8888bb}
+#log li::before{content:'> ';color:#3a3a8a}
+/* ── Pixel corners ── */
+.corner{
+  width:100%;max-width:480px;height:4px;
+  background:#3a3a8a;
+  box-shadow:inset 0 1px 0 #5a5aaa;
 }
 </style>
 </head>
 <body>
-<div class="cam tl">CH-01 / AI-WORKER-001</div>
-<div class="cam tr">4K·30FPS / IR-ON</div>
-<div class="cam bl">MOTION-DETECT: ACTIVE</div>
-<div class="cam br">UPTIME: <span id="uptime">00:00:00</span></div>
 
-<div class="hdr">
-  <span class="hdr-title">[ AI打工人实时监控系统 v2.7 ]</span>
-  <span style="display:flex;gap:14px;align-items:center">
-    <span class="rec"><span class="dot blink"></span>REC</span>
-    <span class="ts" id="clk">--:--:--</span>
-  </span>
+<!-- Title bar -->
+<div class="titlebar">
+  <div>
+    <div class="game-title">WORKER-001</div>
+    <div class="sub-title">小 机 / AI打工人模拟器</div>
+  </div>
+  <div style="text-align:right">
+    <div class="rec"><span class="rec-dot"></span><span>REC</span></div>
+    <div class="clk" id="clk">--:--:--</div>
+  </div>
 </div>
 
-<div class="grid">
+<!-- Main scene -->
+<div class="scene bg-office" id="scene">
+  <div class="scene-lbl" id="slbl">OFFICE / CUBICLE-07</div>
 
-  <!-- Current status - full width -->
-  <div class="panel" data-label="CURRENT STATUS" style="grid-column:1/-1">
-    <div class="big" id="status">正在连接监控信号...</div>
+  <div class="bg-desk"         id="bg-desk"    ></div>
+  <div class="bg-monitor"      id="bg-monitor" ></div>
+  <div class="bg-monitor-stand"id="bg-mstand"  ></div>
+  <div class="bg-table"        id="bg-table"   style="display:none"></div>
+  <div class="bg-counter"      id="bg-counter" style="display:none"></div>
+  <div class="bg-lamp"         id="bg-lamp"    style="display:none"></div>
+  <div class="effect"          id="effect"     style="display:none"></div>
+
+  <div class="sprite-wrap">
+    <div id="sprite"></div>
   </div>
-
-  <!-- Vitals -->
-  <div class="panel" data-label="VITAL SIGNS">
-    <div class="bar-row">
-      <div class="bar-lbl"><span>心情 MOOD</span><span id="mv">--</span></div>
-      <div class="bar-track"><div class="bar-fill" id="mb" style="width:100%;background:#00ff41"></div></div>
-    </div>
-    <div class="bar-row">
-      <div class="bar-lbl"><span>精力 ENERGY</span><span id="ev">--</span></div>
-      <div class="bar-track"><div class="bar-fill" id="eb" style="width:100%;background:#00d4ff"></div></div>
-    </div>
-    <div class="stat-row">
-      <div><div class="sv" id="sk">0</div><div class="sl">摸鱼技能</div></div>
-    </div>
-  </div>
-
-  <!-- Inner thoughts -->
-  <div class="panel" data-label="INNER THOUGHTS / LAST EVENT">
-    <div class="thought" id="thought">等待AI打工人思考中...</div>
-    <div class="event" id="event">暂无异常事件</div>
-  </div>
-
-  <!-- Log -->
-  <div class="panel log-wrap" data-label="ACTION LOG">
-    <ul class="log" id="log">
-      <li style="color:#2a2a2a">等待行动记录...</li>
-    </ul>
-  </div>
-
 </div>
+
+<!-- Status -->
+<div class="status-bar">
+  <div class="status-txt" id="status">-- CONNECTING --</div>
+</div>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="stat-row">
+    <div class="stat-lbl">❤ 心情</div>
+    <div class="bar-wrap"><div class="bar-fill bar-mood"   id="bm" style="width:100%"></div></div>
+    <div class="stat-val" id="vm">100</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat-lbl">⚡ 精力</div>
+    <div class="bar-wrap"><div class="bar-fill bar-energy" id="be" style="width:100%"></div></div>
+    <div class="stat-val" id="ve">100</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat-lbl">🎮 摸鱼</div>
+    <div class="bar-wrap"><div class="bar-fill bar-skill"  id="bs" style="width:0%"></div></div>
+    <div class="stat-val" id="vs">0</div>
+  </div>
+</div>
+
+<!-- Dialog -->
+<div class="dialog">
+  <div class="dlg-box">
+    <div class="dlg-name">小机的内心OS：</div>
+    <div id="thought">（等待AI思考中...）</div>
+  </div>
+</div>
+
+<!-- Log -->
+<div class="logbox">
+  <div class="log-hdr">[ ACTION LOG ]</div>
+  <ul id="log"><li style="color:#22224a">等待行动记录...</li></ul>
+</div>
+<div class="corner"></div>
 
 <script>
-var _start = Date.now();
+// ═══════════════════════════════════════════════════════
+//  PIXEL ART ENGINE
+// ═══════════════════════════════════════════════════════
+var PS = 8; // px per pixel
+var PAL = {
+  '.':null,
+  'h':'#FFBB99','H':'#DD9977','d':'#BB7755',   // skin
+  'k':'#221100','K':'#4A3020',                   // hair
+  'W':'#FFFFFF','w':'#001100',                   // eye white + pupil
+  'e':'#112200',                                 // closed eye
+  'b':'#5599FF','B':'#3377DD','s':'#1155BB',    // shirt blue
+  'p':'#337766','P':'#559988',                   // pants
+  'x':'#221111','X':'#110000',                   // shoes
+  'T':'#BB8855','t':'#885522','q':'#664400',    // desk/wood
+  'G':'#33FF88','g':'#11AA44',                   // screen green
+  'c':'#999999','C':'#CCCCCC','z':'#555555',    // computer gray
+  'n':'#112244','N':'#1a3a66',                   // phone/dark
+  'A':'#AADDFF','a':'#88BBDD',                   // sweat
+  'Y':'#FFEE00','y':'#CCBB00',                   // yellow
+  'O':'#DD8833','o':'#FFBB66',                   // coffee
+  'R':'#FF5544','r':'#FF8877',                   // red
+  'S':'#FFFF88',                                 // star
+  'M':'#FFAAFF',                                 // pink
+  'v':'#666688',                                 // dark blue-gray
+  'Q':'#FFD700',                                 // gold / ?
+  'Z':'#333333','m':'#555577',                   // misc dark
+};
 
-function clr(v) {
-  if (v > 80) return '#00ff41';
-  if (v > 50) return '#ffd93d';
-  if (v > 20) return '#ff9900';
-  return '#ff3333';
+function shadow(rows){
+  var out=[];
+  rows.forEach(function(row,y){
+    for(var x=0;x<row.length;x++){
+      var c=PAL[row[x]];
+      if(c) out.push((x*PS)+'px '+(y*PS)+'px 0 '+c);
+    }
+  });
+  return out.length?out.join(','):'none';
 }
 
-function pad(n) { return String(n).padStart(2,'0'); }
+// ═══════════════════════════════════════════════════════
+//  SPRITE DATA  (13 wide × 18 tall, 8px per pixel)
+//  Total art: 104 × 144 px
+// ═══════════════════════════════════════════════════════
+var SP = {
+  write_code:[
+    [// frame 0 – hands on keyboard
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhhHhhhhK..',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'hbBBBBBBBBBbh',
+      'h.bBBBBBBBb.h',
+      '...ppPPPppp..',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+    [// frame 1 – hands lifted (typing)
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhhHhhhhK..',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'HbbBBBBBBBbbH',
+      'H..bBBBBBb..H',
+      '...ppPPPppp..',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+  ],
+  debug:[
+    [// frame 0 – head slumped on desk
+      '.............',
+      '....kKKKKk...',
+      '...kKKKKKKKk.',
+      '..kKhhhhhhhKk',
+      '..KhhhhhhhhK.',
+      '..Kheehhhheek', // e=closed eye
+      '..KhhhhhhhK..',
+      '...kKhhhkKk..',
+      '....hhhhhh...',
+      '...bBBBBBBb..',
+      '..bBBBBBBBBb.',
+      '.HbBBBBBBBBb.',
+      '.H.bBBBBBBb..',
+      '...ppPPPppp..',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+    [// frame 1 – head tilted slightly
+      '.............',
+      '.....kKKKKk..',
+      '....kKKKKKKKk',
+      '...kKhhhhhhhK',
+      '...KhhhhhhhK.',
+      '...Kheehhhee.',
+      '...KhhhhhK...',
+      '....kKhkKk...',
+      '.....hhhh....',
+      '...bBBBBBBb..',
+      '..bBBBBBBBBb.',
+      '.HbBBBBBBBBb.',
+      '.H.bBBBBBBb..',
+      '...ppPPPppp..',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+  ],
+  slack_off:[
+    [// frame 0 – leaning back, phone in right hand
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhhHhhhhK..',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      '.hBBBBBBBBnN.',
+      '.h.BBBBBBnNN.',
+      '...ppPPPppp..',
+      '...ppPPPppp..',
+      '....pp...pp..',
+      '....xx...xx..',
+      '.............',
+    ],
+    [// frame 1 – phone tilted
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhhHhhhhK..',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      '.hBBBBBBBBnN.',
+      '.h.BBBBBBNn..',
+      '...ppPPPppp..',
+      '....pp...ppp.',
+      '.....p....pp.',
+      '.....x....xx.',
+      '.............',
+    ],
+  ],
+  buy_coffee:[
+    [// frame 0 – walking, left foot fwd, coffee in right hand
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhhHhhhhK..',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'hbBBBBBBBBoO.',
+      'h.bBBBBBBboO.',
+      '...ppPPPppp..',
+      '...ppp..pppp.',
+      '...ppp...ppp.',
+      '...xxx....xx.',
+      '.............',
+    ],
+    [// frame 1 – right foot fwd
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhhHhhhhK..',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'hbBBBBBBBBoO.',
+      'h.bBBBBBBboO.',
+      '...ppPPPppp..',
+      '...pppp..ppp.',
+      '...ppp....pp.',
+      '...xx.....xxx',
+      '.............',
+    ],
+  ],
+  attend_meeting:[
+    [// frame 0 – sitting at table, blank stare
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.Khehehhehehk', // e=sleepy half-closed eyes
+      '.KhhhhhhhhhK.',
+      '.Khhhm.mhhhK.',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'hbBBBBBBBBBbh',
+      'h.bBBBBBBBb.h',
+      '...ppPPPppp..',
+      '.............',
+      '.............',
+      '.............',
+      '.............',
+    ],
+    [// frame 1 – eyes shifted sideways (bored)
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhwWhhwWhhhK', // pupils shifted
+      '.KhhhhhhhhhK.',
+      '.Khhhm.mhhhK.',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'hbBBBBBBBBBbh',
+      'h.bBBBBBBBb.h',
+      '...ppPPPppp..',
+      '.............',
+      '.............',
+      '.............',
+      '.............',
+    ],
+  ],
+  check_messages:[
+    [// frame 0 – WIDE EYES staring at screen
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwWWwWhhK.',  // wide wide eyes
+      '.KWwwwwwwwWK.',  // extra row of white
+      '.KhhhhhhhhhK.',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'hbBBBBBBBBBbh',
+      'h.bBBBBBBBb.h',
+      '...ppPPPppp..',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+    [// frame 1 – leaning fwd
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwWWwWhhK.',
+      '.KWwwwwwwwWK.',
+      '..KhhhhhhhK..',
+      '...kKhhhkKk..',
+      '....hhhhhh...',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      'hbbBBBBBBBbbh',
+      'h..bBBBBBb..h',
+      '...ppPPPppp..',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+  ],
+  get_status:[
+    [// frame 0 – standing, looking at camera, waving
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhHHHhhhhK.',  // big smile
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      '.hbBBBBBBBbHHH',  // arm waving up-right
+      '..hbBBBBBbHH..',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+    [// frame 1 – arm higher
+      '...kKKKKk....',
+      '..kKKKKKKKk..',
+      '.kKhhhhhhhKk.',
+      '.KhhhhhhhhhhK',
+      '.KhWwhhWwhhhK',
+      '.KhhhhhhhhhK.',
+      '.KhhHHHhhhhK.',
+      '..kKhhhhhkK..',
+      '...hhhhhhhhh.',
+      '..bbbbbbbbbb.',
+      '.bBBBBBBBBBb.',
+      '.hbBBBBBBBb.HH',
+      '..hbBBBBBbHHH.',
+      '...ppPPPppp..',
+      '...pp.....pp.',
+      '...pp.....pp.',
+      '...xx.....xx.',
+      '.............',
+    ],
+  ],
+};
 
-function tick() {
-  var now = new Date();
-  document.getElementById('clk').textContent =
-    pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+// ═══════════════════════════════════════════════════════
+//  SCENE CONFIG
+// ═══════════════════════════════════════════════════════
+var CFG = {
+  write_code:     {bg:'bg-office', lbl:'CUBICLE-07 / CODING',    eff:'',   desk:1,mon:1,tbl:0,ctr:0,lmp:0},
+  debug:          {bg:'bg-office', lbl:'DEBUG ZONE / FLOOR 3',   eff:'❓', desk:1,mon:1,tbl:0,ctr:0,lmp:0},
+  slack_off:      {bg:'bg-office', lbl:'SLACK MODE ACTIVATED',   eff:'📱', desk:0,mon:0,tbl:0,ctr:0,lmp:0},
+  buy_coffee:     {bg:'bg-outside',lbl:'B1F / COFFEE SHOP',      eff:'☕', desk:0,mon:0,tbl:0,ctr:1,lmp:1},
+  attend_meeting: {bg:'bg-meeting',lbl:'CONF ROOM A / MEETING',  eff:'💤', desk:0,mon:0,tbl:1,ctr:0,lmp:0},
+  check_messages: {bg:'bg-office', lbl:'INBOX +99 / PANIC MODE', eff:'💦', desk:1,mon:1,tbl:0,ctr:0,lmp:0},
+  get_status:     {bg:'bg-office', lbl:'STATUS CHECK',           eff:'⭐', desk:0,mon:0,tbl:0,ctr:0,lmp:0},
+};
 
-  var s = Math.floor((Date.now()-_start)/1000);
-  var h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
-  document.getElementById('uptime').textContent = pad(h)+':'+pad(m)+':'+pad(ss);
+// ═══════════════════════════════════════════════════════
+//  ANIMATION STATE
+// ═══════════════════════════════════════════════════════
+var curKey='get_status', frame=0, timer=null;
+
+function spriteKey(status){
+  if(!status) return 'get_status';
+  var s=status;
+  if(s.indexOf('敲代码')>-1||s.indexOf('写代码')>-1||s.indexOf('💻')>-1) return 'write_code';
+  if(s.indexOf('Bug')>-1||s.indexOf('bug')>-1||s.indexOf('修')>-1||s.indexOf('🐛')>-1) return 'debug';
+  if(s.indexOf('摸鱼')>-1||s.indexOf('🐟')>-1) return 'slack_off';
+  if(s.indexOf('咖啡')>-1||s.indexOf('☕')>-1) return 'buy_coffee';
+  if(s.indexOf('开会')>-1||s.indexOf('会议')>-1||s.indexOf('📊')>-1) return 'attend_meeting';
+  if(s.indexOf('消息')>-1||s.indexOf('💬')>-1) return 'check_messages';
+  return 'get_status';
 }
-tick(); setInterval(tick, 1000);
 
-async function poll() {
-  try {
-    var d = await (await fetch('/status')).json();
-    document.getElementById('status').textContent  = d.current_status || '--';
-    document.getElementById('thought').textContent = d.thought        || '...';
-    document.getElementById('event').textContent   = d.last_event     || '暂无';
-    document.getElementById('mv').textContent = d.mood   + '/100';
-    document.getElementById('ev').textContent = d.energy + '/100';
-    document.getElementById('mb').style.cssText = 'width:'+d.mood  +'%;background:'+clr(d.mood);
-    document.getElementById('eb').style.cssText = 'width:'+d.energy+'%;background:'+clr(d.energy);
-    document.getElementById('sk').textContent = d.slacking_skill;
+function show(id,v){document.getElementById(id).style.display=v?'block':'none';}
 
-    var ul = document.getElementById('log');
-    ul.innerHTML = '';
-    var logs = (d.log || []).slice().reverse();
-    logs.forEach(function(e) {
-      var li = document.createElement('li');
-      li.textContent = e;
+function setScene(key){
+  var cfg=CFG[key]||CFG.get_status;
+  var sc=document.getElementById('scene');
+  sc.className='scene '+cfg.bg;
+  document.getElementById('slbl').textContent=cfg.lbl;
+  var eff=document.getElementById('effect');
+  if(cfg.eff){eff.style.display='block';eff.textContent=cfg.eff;}
+  else{eff.style.display='none';}
+  show('bg-desk',   cfg.desk);
+  show('bg-monitor',cfg.mon);
+  show('bg-mstand', cfg.mon);
+  show('bg-table',  cfg.tbl);
+  show('bg-counter',cfg.ctr);
+  show('bg-lamp',   cfg.lmp);
+}
+
+function renderSprite(){
+  var frames=SP[curKey]||SP.get_status;
+  var f=frames[frame%frames.length];
+  document.getElementById('sprite').style.boxShadow=shadow(f);
+}
+
+function startAnim(key){
+  if(key===curKey) return;
+  curKey=key; frame=0;
+  if(timer) clearInterval(timer);
+  renderSprite();
+  setScene(key);
+  timer=setInterval(function(){frame++;renderSprite();},380);
+}
+
+// ═══════════════════════════════════════════════════════
+//  TYPEWRITER
+// ═══════════════════════════════════════════════════════
+var twTimer=null, lastThought='';
+function typewrite(text){
+  if(text===lastThought) return;
+  lastThought=text;
+  var el=document.getElementById('thought');
+  el.textContent='';
+  el.classList.add('typing');
+  if(twTimer) clearInterval(twTimer);
+  var i=0, chars=[...text];
+  twTimer=setInterval(function(){
+    el.textContent+=chars[i]||'';
+    i++;
+    if(i>=chars.length){clearInterval(twTimer);el.classList.remove('typing');}
+  }, 55);
+}
+
+// ═══════════════════════════════════════════════════════
+//  CLOCK
+// ═══════════════════════════════════════════════════════
+function pad(n){return String(n).padStart(2,'0');}
+function tick(){
+  var d=new Date();
+  document.getElementById('clk').textContent=pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+}
+tick(); setInterval(tick,1000);
+
+// ═══════════════════════════════════════════════════════
+//  POLLING
+// ═══════════════════════════════════════════════════════
+async function poll(){
+  try{
+    var d=await(await fetch('/status')).json();
+
+    document.getElementById('status').textContent=d.current_status||'--';
+
+    var key=spriteKey(d.current_status||'');
+    startAnim(key);
+
+    var mood  =Math.max(0,Math.min(100,d.mood  ||0));
+    var energy=Math.max(0,Math.min(100,d.energy||0));
+    var skill =Math.min(999,d.slacking_skill||0);
+
+    document.getElementById('bm').style.width=mood+'%';
+    document.getElementById('be').style.width=energy+'%';
+    document.getElementById('bs').style.width=Math.min(100,skill/10)+'%';
+    document.getElementById('vm').textContent=mood;
+    document.getElementById('ve').textContent=energy;
+    document.getElementById('vs').textContent=skill;
+
+    typewrite(d.thought||'...');
+
+    var ul=document.getElementById('log');
+    ul.innerHTML='';
+    var logs=(d.log||[]).slice(-5).reverse();
+    if(!logs.length){
+      var li=document.createElement('li');
+      li.textContent='等待行动记录...';li.style.color='#22224a';
       ul.appendChild(li);
-    });
-  } catch(e) { console.error(e); }
+    } else {
+      logs.forEach(function(e){
+        var li=document.createElement('li');li.textContent=e;ul.appendChild(li);
+      });
+    }
+  }catch(e){console.error(e);}
 }
 
-poll(); setInterval(poll, 2000);
+// Init
+startAnim('get_status');
+renderSprite();
+setScene('get_status');
+poll();
+setInterval(poll,3000);
 </script>
 </body>
 </html>
