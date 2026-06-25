@@ -436,6 +436,9 @@ def work_action(action: str, thought: str) -> dict:
     if event:
         _s["last_event"] = event
 
+    # 快照当日收入，必须在 _end_of_day() 之前，否则会被重置为 0
+    today_snapshot = _s["today_earnings"]
+
     day_msg = ""
     if action != "get_status":
         _s["day_actions"] += 1
@@ -456,7 +459,7 @@ def work_action(action: str, thought: str) -> dict:
         "突发事件": event or "风平浪静",
         "内心OS":   thought,
         "工资变化": f"{salary_delta:+d}" if salary_delta else "±0",
-        "今日工资": f"${_s['today_earnings']}",
+        "今日工资": f"${today_snapshot}",
         "余额":     f"${_s['salary_balance']}",
         "今日进度": f"{_s['day_actions']}/{_s['day_target']}",
         "最近日志": _s["log"][-5:],
