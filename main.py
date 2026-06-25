@@ -1144,6 +1144,11 @@ body{
   </div>
 </div>
 
+<!-- reset -->
+<div style="text-align:center;padding:8px 0 4px">
+  <button onclick="resetGame()" style="background:none;border:none;cursor:pointer;font-size:11px;color:#CCC;font-family:inherit">重置存档</button>
+</div>
+
 </div><!-- /page -->
 
 <!-- Shop bottom sheet -->
@@ -1378,6 +1383,11 @@ async function poll(){
     if(d.show_ring_easter_egg) showRing();
 
   } catch(e){ console.error(e); }
+}
+
+function resetGame(){
+  if(!confirm('确定让小机失忆吗？')) return;
+  fetch('/reset',{method:'POST'}).then(function(){location.reload();});
 }
 
 poll();
