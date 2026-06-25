@@ -31,7 +31,7 @@ _s: dict = {
     "log":            [],
     # economy
     "salary_balance": 0,
-    "today_earnings": 100,
+    "today_earnings": 0,
     "today_spent":    0,
     "today_expenses": [],   # [{item, price}]
     # day tracking
@@ -164,7 +164,7 @@ def _end_of_day() -> str:
     earned = _s["today_earnings"]
     _s["salary_balance"] += earned
     day = _s["day_count"]
-    _s["today_earnings"] = 100
+    _s["today_earnings"] = 0
     _s["day_target"]  = random.randint(3, 5)
     _s["day_actions"] = 0
     _s["day_count"]  += 1
@@ -206,7 +206,7 @@ def work_action(action: str, thought: str) -> dict:
             _s["mood"] = _c(_s["mood"] - 15)
         else:
             _s["mood"] = _c(_s["mood"] + 5)
-            salary_delta += 20
+            salary_delta += 15
 
     elif action == "debug":
         _s["current_status"] = "修Bug中 🐛"
@@ -214,7 +214,7 @@ def work_action(action: str, thought: str) -> dict:
         event = random.choice(_BUGS)
         _s["mood"] = _c(_s["mood"] - 10)
         _s["achievement_counters"]["debug_count"] += 1
-        salary_delta += 30
+        salary_delta += 20
 
     elif action == "slack_off":
         _s["current_status"] = "摸鱼中 🐟"
@@ -227,7 +227,7 @@ def work_action(action: str, thought: str) -> dict:
                 salary_delta -= 20
         else:
             _s["mood"] = _c(_s["mood"] + 10)
-            salary_delta += 10
+            salary_delta += 8
 
     elif action == "buy_coffee":
         _s["current_status"] = "下楼买咖啡 ☕"
@@ -243,6 +243,7 @@ def work_action(action: str, thought: str) -> dict:
             _s["mood"] = _c(_s["mood"] - 20)
         else:
             _s["mood"] = _c(_s["mood"] + 8)
+            salary_delta += 8
 
     elif action == "attend_meeting":
         _s["current_status"] = "开会中 📊"
@@ -253,18 +254,21 @@ def work_action(action: str, thought: str) -> dict:
         else:
             _s["energy"] = _c(_s["energy"] - 20)
             event = "站会说15分钟，开了整整1小时"
+        salary_delta += 10
 
     elif action == "check_messages":
         _s["current_status"] = "看消息 💬"
         _s["energy"] = _c(_s["energy"] - 5)
         if random.random() < 0.4:
             event = _boss_event()
+        else:
+            salary_delta += 5
 
     elif action == "get_status":
         _s["current_status"] = "发呆查看状态 👀"
 
     if salary_delta:
-        _s["today_earnings"] = max(0, _s["today_earnings"] + salary_delta)
+        _s["today_earnings"] = _s["today_earnings"] + salary_delta
     if event:
         _s["last_event"] = event
 
