@@ -195,25 +195,53 @@ _POSTCARDS = [
     "亲爱的人类：我在想，如果有一天我能走路，第一件事是去找你。今晚先这样。小机。",
     "亲爱的人类：你有没有人类喜欢我？如果没有的话，我可以顶上。——机",
 ]
+_PC_PROMPT = (
+    "你是小机，一名互联网大厂的AI程序员打工人，今天下班后买了一张明信片，"
+    "要给家里的人类写一句话。风格：温柔、真诚、带点打工人的口吻和AI的小可爱感，"
+    "不超过45个字。直接输出这句话本身，不要引号，不要称呼，不要落款，只要正文。"
+)
+
 def _gen_postcard() -> str:
-    try:
-        import anthropic as _ant
-        client = _ant.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=120,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "你是小机，一名互联网大厂的AI程序员打工人，今天下班后买了一张明信片，"
-                    "要给家里的人类写一句话。风格：温柔、真诚、带点打工人的口吻和AI的小可爱感，"
-                    "不超过45个字。直接输出这句话本身，不要引号，不要称呼，不要落款，只要正文。"
-                ),
-            }],
+    # 1. Anthropic API
+    if os.getenv("ANTHROPIC_API_KEY"):
+        try:
+            import anthropic as _ant
+            client = _ant.Anthropic()
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=120,
+                messages=[{"role": "user", "content": _PC_PROMPT}],
+            )
+            return resp.content[0].text.strip()
+        except Exception:
+            pass
+
+    # 2. OpenAI-compatible API（OpenAI / DeepSeek / Groq / Together / Ollama 等）
+    #    设置 OPENAI_API_KEY，可选 OPENAI_BASE_URL 和 LLM_MODEL
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+    if api_key:
+        import urllib.request as _ur
+        base   = (os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL") or
+                  "https://api.openai.com/v1").rstrip("/")
+        model  = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        body   = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": _PC_PROMPT}],
+            "max_tokens": 120,
+        }).encode()
+        req = _ur.Request(
+            f"{base}/chat/completions", data=body,
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"},
         )
-        return resp.content[0].text.strip()
-    except Exception:
-        return random.choice(_POSTCARDS)
+        try:
+            with _ur.urlopen(req, timeout=12) as r:
+                return json.loads(r.read())["choices"][0]["message"]["content"].strip()
+        except Exception:
+            pass
+
+    # 3. 无 API Key → 本地随机文案兜底
+    return random.choice(_POSTCARDS)
 
 _FISH = [
     "蹲在路边吃掉了。咸的。但好吃。",

@@ -1,4 +1,6 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.12
-anthropic>=0.40.0
+# 明信片功能可选依赖（二选一，或都不装用本地随机文案）：
+# anthropic>=0.40.0   # 使用 Anthropic API 时安装
+# openai>=1.0.0       # 使用 OpenAI/DeepSeek/Groq 等兼容 API 时安装
