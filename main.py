@@ -19,6 +19,43 @@ _clients: dict = {}
 _codes:   dict = {}
 _tokens:  dict = {}
 
+# ── Persistence ───────────────────────────────────────────────────────────────
+_STATE_FILE = "/data/game_state.json"
+
+def _default_state() -> dict:
+    s = {
+        "mood":           100,
+        "energy":         100,
+        "slacking_skill": 0,
+        "current_status": "刚刚打卡，准备开始摸鱼",
+        "last_event":     "元气满满地来上班了",
+        "thought":        "今天一定要准时下班",
+        "log":            [],
+        "salary_balance": 0,
+        "today_earnings": 0,
+        "today_spent":    0,
+        "today_expenses": [],
+        "day_target":  random.randint(3, 5),
+        "day_actions": 0,
+        "day_count":   1,
+        "inventory":    {},
+        "achievements": [],
+        "achievement_counters": {
+            "debug_count":          0,
+            "lottery_count":        0,
+            "lottery_loss_streak":  0,
+            "coffee_count":         0,
+            "client_trouble_count": 0,
+            "rose_count":           0,
+        },
+        "pending_challenge": None,
+        "challenge_answer":  None,
+        "challenge_type":    None,
+        "show_ring_easter_egg": False,
+        "_cheat_level": 0,
+    }
+    return s
+
 # ── Game state ─────────────────────────────────────────────────────────────────
 _s: dict = {
     # visual / status
@@ -203,6 +240,28 @@ def _end_of_day() -> str:
     _s["current_status"] = f"第{day}天下班了 🎉"
     return f"第{day}天结束！工资 ${earned} 已到账，总余额 ${_s['salary_balance']}"
 
+def _save_state() -> None:
+    try:
+        os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
+        with open(_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_s, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[warn] save_state failed: {e}")
+
+def _load_state() -> None:
+    try:
+        with open(_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _s.update(data)
+        print(f"[info] state loaded from {_STATE_FILE}")
+    except FileNotFoundError:
+        _save_state()
+        print(f"[info] no save file found, created {_STATE_FILE}")
+    except Exception as e:
+        print(f"[warn] load_state failed: {e}")
+
+_load_state()
+
 # ── work_action ────────────────────────────────────────────────────────────────
 def work_action(action: str, thought: str) -> dict:
     _s["thought"] = thought
@@ -255,6 +314,7 @@ def work_action(action: str, thought: str) -> dict:
                 _s["pending_challenge"] = q
                 _s["challenge_answer"]  = None
                 _s["challenge_type"]    = "scenario"
+            _save_state()
             return {
                 "状态":   "发现Bug 🐛",
                 "挑战":   "🧩 Debug挑战来了！",
@@ -369,6 +429,7 @@ def work_action(action: str, thought: str) -> dict:
         res["下班通知"] = day_msg
     if new_ach:
         res["achievement_unlocked"] = new_ach
+    _save_state()
     return res
 
 # ── buy_item ───────────────────────────────────────────────────────────────────
@@ -488,6 +549,7 @@ def buy_item(item_id: str) -> dict:
     if new_ach:
         res["achievement_unlocked"] = new_ach
     res.update(extra)
+    _save_state()
     return res
 
 # ── MCP tool definitions ───────────────────────────────────────────────────────
@@ -717,7 +779,19 @@ async def rest_buy(req: Request):
 @app.post("/ack-ring")
 async def ack_ring():
     _s["show_ring_easter_egg"] = False
+    _save_state()
     return {"ok": True}
+
+@app.post("/reset")
+async def reset_state():
+    try:
+        os.remove(_STATE_FILE)
+    except FileNotFoundError:
+        pass
+    _s.clear()
+    _s.update(_default_state())
+    _save_state()
+    return {"ok": True, "msg": "存档已清除，小机重新出发！"}
 
 @app.get("/status")
 async def get_status():
