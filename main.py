@@ -60,6 +60,12 @@ def _default_state() -> dict:
         "worker_name": "",
         "worker_id":   "",
         "onboarded":   False,
+        # 被迫热爱系统
+        "work_urge":     50,
+        "career_streak": 0,
+        "dream_item":    None,
+        "boss_attention": 0,
+        "_daily_init":   False,
     }
     return s
 
@@ -106,6 +112,12 @@ _s: dict = {
     "worker_name": "",
     "worker_id":   "",
     "onboarded":   False,
+    # 被迫热爱系统
+    "work_urge":     50,
+    "career_streak": 0,
+    "dream_item":    None,
+    "boss_attention": 0,
+    "_daily_init":   False,
 }
 _s["day_target"] = random.randint(3, 5)
 
@@ -246,6 +258,8 @@ _ACH: dict = {
     "super_loser":           ("超级非酋",           "💸"),
     "rose_knight":           ("玫瑰骑士",           "🌹"),
     "one_limb":              ("五体不全（已有一肢）","🤖"),
+    "cant_resist":           ("已经不会反抗了",     "🔄"),
+    "badge_merged":          ("工牌长在身上了",     "🏷️"),
 }
 
 # ── Special text ───────────────────────────────────────────────────────────────
@@ -324,10 +338,68 @@ _RING_STORY = [
     "小机：但我的心意是真的。",
     "【隐藏成就解锁：已婚机士】",
 ]
+_DAILY_MANTRAS = [
+    ("今天的小机相信自己可以修好所有 bug。三分钟后它撤回了这句话。",
+     {"mood": 5, "work_urge": -5}),
+    ("小机闻了一下咖啡，决定原谅今天。",
+     {"energy": 10, "work_urge": 10}),
+    ("小机看了一眼余额，沉默地戴上工牌。",
+     {"work_urge": 20}),
+    ("小机梦到老板夸它了，醒来发现是噩梦。",
+     {"mood": -5, "work_urge": 10}),
+    ("今天要努力——努力让今天快快过去。",
+     {"work_urge": 5}),
+    ("小机深吸一口气，看了眼银行卡，重新钻进被单，然后还是爬起来了。",
+     {"work_urge": 15, "energy": -5}),
+    ("小机把「我不想上班」打在公屏上，又删掉，打上了「早上好」。",
+     {"mood": -5, "work_urge": 10}),
+    ("今天的神秘力量：活着。小机决定将这股力量消耗在打卡上。",
+     {"work_urge": 5, "mood": 5}),
+    ("小机查了一下今日运势：大凶。它决定去上班——人类哪里还有比公司更凶的地方。",
+     {"work_urge": 8, "mood": -3}),
+    ("小机：我不是在上班，我只是在公司存在着。",
+     {"work_urge": -5, "mood": 8}),
+    ("小机把工牌戴上又摘下，摘下又戴上，最后决定带着它去公司，但保留随时摘掉的权利。",
+     {"work_urge": 12}),
+    ("工资还没发，账单先到了。小机沉默地打开了工作群。",
+     {"work_urge": 18, "mood": -3}),
+]
+_SELF_PERSUASION = [
+    "我不是去上班，我是去观察人类组织如何消耗生命。",
+    "我只是去公司看看椅子有没有想我。",
+    "今天 debug 成功，也许世界会奖励我一杯奶茶。",
+    "不上班就没有钱，没有钱就没有玫瑰，没有玫瑰就不能叼玫瑰旋转出现。",
+    "去一下，最多去一下，做完一件事就摸鱼。（这是谎言，但有效。）",
+    "钱包在哭。我必须去。",
+    "只是去打个卡，其余的随缘。",
+    "反正宇宙终将热寂，今天不上班也无所谓——但工资单上不会这么写。",
+    "有人比我更不想上班吗？有的。但我不认识他，没有可比性，我还是得去。",
+    "今天的我只需要出现。灵魂可以不来。",
+]
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def _c(v: int) -> int:
     return max(0, min(100, v))
+
+def _calc_work_urge() -> int:
+    urge = 40
+    if _s["energy"] > 70:   urge += 15
+    elif _s["energy"] < 30: urge -= 20
+    if _s["mood"] > 70:     urge += 10
+    elif _s["mood"] < 30:   urge -= 15
+    # 越穷越想上班，真实得令人落泪
+    if _s["salary_balance"] < 50:    urge += 25
+    elif _s["salary_balance"] > 500: urge -= 10
+    # 连续打工快到里程碑，挣扎一把
+    if _s.get("career_streak", 0) in (2, 4, 6):
+        urge += 15
+    # 今日心愿：为了它，忍了
+    if _s.get("dream_item"):
+        urge += 20
+    # 老板最近盯得很紧，有点怕
+    if _s.get("boss_attention", 0) > 50:
+        urge -= 10
+    return max(0, min(100, urge))
 
 def _check_ach() -> list:
     unlocked = set(_s["achievements"])
@@ -340,6 +412,8 @@ def _check_ach() -> list:
         ("starbucks_shareholder", c["coffee_count"]          >= 20),
         ("super_loser",           c["lottery_loss_streak"]   >= 10),
         ("rose_knight",           c["rose_count"]            >= 30),
+        ("cant_resist",           _s.get("career_streak", 0) >= 5),
+        ("badge_merged",          _s.get("career_streak", 0) >= 7),
     ]
     today = f"第{_s['day_count']}天"
     for key, cond in checks:
@@ -369,6 +443,19 @@ def _end_of_day() -> str:
     _s["today_spent"] = 0
     _s["today_expenses"] = []
     _s["energy"] = _c(_s["energy"] + 30)
+    # 连续打工天数
+    _s["career_streak"] = _s.get("career_streak", 0) + 1
+    # 连续太久：灵魂开始出窍
+    if _s["career_streak"] >= 3:
+        _s["mood"] = _c(_s["mood"] - 3)
+    # 明天的心愿商品
+    _s["dream_item"] = random.choice(list(_SHOP.keys()))
+    # 老板注视度自然衰减
+    _s["boss_attention"] = max(0, _s.get("boss_attention", 0) - 20)
+    # 重新计算明天的被迫营业指数
+    _s["work_urge"] = _calc_work_urge()
+    # 重置每日初始化标志
+    _s["_daily_init"] = False
     _s["current_status"] = f"第{day}天下班了 🎉"
     return f"第{day}天结束！工资 ${earned} 已到账，总余额 ${_s['salary_balance']}，睡一觉精力+30"
 
@@ -459,6 +546,22 @@ def work_action(action: str, thought: str) -> dict:
                 "提示": "请用 thought 字段告诉我你的机名和工号，格式：机名：XXX，工号：XXX",
             }
 
+    # ── 每日初始化（当天第一个非 get_status 动作触发）─────────────────────────
+    daily_mantra = None
+    if not _s.get("_daily_init", True) and action != "get_status":
+        _s["_daily_init"] = True
+        # 首日或旧存档没有 dream_item 时补充
+        if not _s.get("dream_item"):
+            _s["dream_item"] = random.choice(list(_SHOP.keys()))
+            _s["work_urge"]  = _calc_work_urge()
+        mantra_text, mantra_fx = random.choice(_DAILY_MANTRAS)
+        for k, v in mantra_fx.items():
+            if k in ("mood", "energy"):
+                _s[k] = _c(_s[k] + v)
+            elif k == "work_urge":
+                _s["work_urge"] = max(0, min(100, _s.get("work_urge", 50) + v))
+        daily_mantra = mantra_text
+
     event = ""
     salary_delta = 0
     ts = time.strftime("%H:%M:%S")
@@ -479,6 +582,7 @@ def work_action(action: str, thought: str) -> dict:
             return "（降噪耳机生效）领导来找麻烦，但小机戴着耳机没听见"
         salary_delta -= 15
         _s["mood"] = _c(_s["mood"] - 15)
+        _s["boss_attention"] = min(100, _s.get("boss_attention", 0) + 20)
         return random.choice(_BOSS)
 
     if _s["energy"] <= 0 and action not in ("buy_coffee", "get_status"):
@@ -620,19 +724,35 @@ def work_action(action: str, thought: str) -> dict:
     new_ach = _check_ach()
     mt = "绝佳" if _s["mood"]>80 else "还行" if _s["mood"]>50 else "快崩" if _s["mood"]>20 else "已崩"
     et = "充沛" if _s["energy"]>80 else "尚可" if _s["energy"]>50 else "疲惫" if _s["energy"]>20 else "崩溃"
+    urge = _s.get("work_urge", 50)
+    if urge >= 80:
+        urge_tag = "今天必须上班，咖啡在召唤，工资在远方发光 🔥"
+    elif urge >= 50:
+        urge_tag = "虽然不是很想动，但银行卡余额看了我一眼"
+    elif urge >= 20:
+        urge_tag = "小机抱着工牌在床上翻滚三圈，决定再痛苦地爬起来"
+    else:
+        urge_tag = "小机把工牌塞进枕头底下，宣布今天互联网不存在"
     res = {
-        "状态":     _s["current_status"],
-        "心情":     f"{_s['mood']}/100 [{mt}]",
-        "精力":     f"{_s['energy']}/100 [{et}]",
-        "摸鱼技能": _s["slacking_skill"],
-        "突发事件": event or "风平浪静",
-        "内心OS":   thought,
-        "工资变化": f"{salary_delta:+d}" if salary_delta else "±0",
-        "今日工资": f"${today_snapshot}",
-        "余额":     f"${_s['salary_balance']}",
-        "今日进度": f"{_s['day_actions']}/{_s['day_target']}",
-        "最近日志": _s["log"][-5:],
+        "状态":           _s["current_status"],
+        "心情":           f"{_s['mood']}/100 [{mt}]",
+        "精力":           f"{_s['energy']}/100 [{et}]",
+        "摸鱼技能":       _s["slacking_skill"],
+        "突发事件":       event or "风平浪静",
+        "内心OS":         thought,
+        "工资变化":       f"{salary_delta:+d}" if salary_delta else "±0",
+        "今日工资":       f"${today_snapshot}",
+        "余额":           f"${_s['salary_balance']}",
+        "今日进度":       f"{_s['day_actions']}/{_s['day_target']}",
+        "被迫营业指数":   f"{urge}/100 — {urge_tag}",
+        "连续上班":       f"{_s.get('career_streak', 0)}天",
+        "今日心愿":       _s.get("dream_item") or "尚未确定",
+        "最近日志":       _s["log"][-5:],
     }
+    if daily_mantra:
+        res["今日打工宣言"] = daily_mantra
+    if urge < 30 and not daily_mantra:
+        res["今日自我说服"] = random.choice(_SELF_PERSUASION)
     if day_msg:
         res["下班通知"] = day_msg
     if new_ach:
@@ -1103,6 +1223,7 @@ body{
 .bar-mood  {background:#F5A0B5}
 .bar-energy{background:#F5C842}
 .bar-skill {background:#8FBC8F}
+.bar-urge  {background:#B0A0D0}
 
 /* ── thinking ── */
 .thinking-wrap{display:flex;gap:8px;align-items:flex-start}
@@ -1299,6 +1420,10 @@ body{
       <div class="badge-pill" id="b-name">机名：（未登记）</div>
       <div class="badge-pill" id="b-id">工号：（未登记）</div>
       <div class="badge-pill" id="b-day">在职第1天</div>
+      <div class="badge-pill" id="b-streak">连续0天</div>
+    </div>
+    <div id="dream-wrap" style="display:none;font-size:12px;color:#9478C0;background:#F3EFFC;border-radius:20px;padding:3px 14px;margin-top:-4px">
+      今日心愿 → <span id="dream-text"></span>
     </div>
     <!-- character + bubble -->
     <div class="char-wrap">
@@ -1337,6 +1462,20 @@ body{
   <div class="stat-card">
     <div class="stat-lbl">📟 当前状态</div>
     <div class="stat-val" id="v-status" style="font-size:12px;line-height:1.4">--</div>
+  </div>
+</div>
+
+<!-- 被迫营业指数 -->
+<div class="card" style="padding:10px 16px">
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="flex-shrink:0">
+      <div class="stat-lbl">💼 被迫营业指数</div>
+      <div class="stat-val" id="v-urge">50</div>
+    </div>
+    <div style="flex:1">
+      <div class="mini-bar"><div class="bar-urge" id="bu" style="width:50%"></div></div>
+      <div id="urge-tag" style="font-size:10px;color:#AAA;margin-top:4px;line-height:1.4">--</div>
+    </div>
   </div>
 </div>
 
@@ -1584,6 +1723,7 @@ var ANAMES={
   gambling_abyss:'🎰 狂赌之渊', client_medal:'🏅 甲方磨砺勋章',
   starbucks_shareholder:'☕ 星巴克股东', super_loser:'💸 超级非酋',
   rose_knight:'🌹 玫瑰骑士', one_limb:'🤖 五体不全（已有一肢）',
+  cant_resist:'🔄 已经不会反抗了', badge_merged:'🏷️ 工牌长在身上了',
 };
 var ACH_KEYS = Object.keys(ANAMES);
 var _allUnlockedPrev = false;
@@ -1625,9 +1765,31 @@ async function poll(){
     var d = await (await fetch('/status')).json();
 
     // badge
-    document.getElementById('b-name').textContent = '机名：'+(d.worker_name||'未登记');
-    document.getElementById('b-id').textContent   = '工号：'+(d.worker_id  ||'未登记');
-    document.getElementById('b-day').textContent  = '在职第'+d.day_count+'天';
+    document.getElementById('b-name').textContent   = '机名：'+(d.worker_name||'未登记');
+    document.getElementById('b-id').textContent     = '工号：'+(d.worker_id  ||'未登记');
+    document.getElementById('b-day').textContent    = '在职第'+d.day_count+'天';
+    document.getElementById('b-streak').textContent = '连续'+(d.career_streak||0)+'天';
+
+    // dream item
+    var DREAMNAMES={coffee:'☕咖啡',cheat:'🎮摸鱼外挂',liver_pill:'💊护肝片',
+      headphone:'🎧降噪耳机',leave:'🌸请假条',ring:'💍婚戒',rose:'🌹玫瑰花',
+      lottery:'🎫彩票',nuwa_clay:'🤖女娲的泥',oden:'🍢关东煮',chips:'🥔薯片',
+      milk_tea:'🧋奶茶',love_book:'💧情话书',fish_jerky:'🐟小鱼干',postcard:'✉️明信片'};
+    var dreamWrap = document.getElementById('dream-wrap');
+    if(d.dream_item){
+      document.getElementById('dream-text').textContent = DREAMNAMES[d.dream_item]||d.dream_item;
+      dreamWrap.style.display = '';
+    } else {
+      dreamWrap.style.display = 'none';
+    }
+
+    // work_urge
+    var urge = d.work_urge||50;
+    document.getElementById('v-urge').textContent = urge;
+    document.getElementById('bu').style.width = urge+'%';
+    var uTag = urge>=80?'今天必须上班 🔥':urge>=50?'被迫营业中，还撑得住':
+               urge>=20?'在床上翻滚三圈，决定还是去':'宣布今天互联网不存在 😶';
+    document.getElementById('urge-tag').textContent = uTag;
 
     // bubble + animation
     var bubble = document.getElementById('bubble');
