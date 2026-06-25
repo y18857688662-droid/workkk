@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI上班模拟器 MCP Server — workkk"""
+"""AI上班模拟器 MCP Server — workkk v2.0"""
 
 import asyncio, base64, hashlib, json, os, random, secrets, time
 
@@ -14,13 +14,14 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
-# ── In-memory stores ───────────────────────────────────────────────────────────
-_clients: dict = {}   # client_id → {client_secret, redirect_uris}
-_codes:   dict = {}   # code      → {client_id, code_challenge, redirect_uri, exp}
-_tokens:  dict = {}   # token     → {client_id, exp}
+# ── OAuth stores ───────────────────────────────────────────────────────────────
+_clients: dict = {}
+_codes:   dict = {}
+_tokens:  dict = {}
 
 # ── Game state ─────────────────────────────────────────────────────────────────
 _s: dict = {
+    # visual / status
     "mood":           100,
     "energy":         100,
     "slacking_skill": 0,
@@ -28,8 +29,33 @@ _s: dict = {
     "last_event":     "元气满满地来上班了",
     "thought":        "今天一定要准时下班",
     "log":            [],
+    # economy
+    "salary_balance": 0,
+    "today_earnings": 100,
+    "today_spent":    0,
+    "today_expenses": [],   # [{item, price}]
+    # day tracking
+    "day_target":  4,
+    "day_actions": 0,
+    "day_count":   1,
+    # inventory & achievements
+    "inventory":    {},
+    "achievements": [],
+    "achievement_counters": {
+        "debug_count":          0,
+        "lottery_count":        0,
+        "lottery_loss_streak":  0,
+        "coffee_count":         0,
+        "client_trouble_count": 0,
+        "rose_count":           0,
+    },
+    # flags
+    "show_ring_easter_egg": False,
+    "_cheat_level": 0,      # each cheat bought adds 1 → -10% catch prob
 }
+_s["day_target"] = random.randint(3, 5)
 
+# ── Events ─────────────────────────────────────────────────────────────────────
 _BUGS = [
     "找了2小时，发现代码没push",
     "Python缩进多了一格",
@@ -42,45 +68,135 @@ _BOSS = [
     "站会说'就一个小需求'，涉及三个系统",
     "被莫名批评，可能早饭没吃好",
 ]
-_CLIENT = [
-    "就改个颜色，结果整套设计稿重来",
-    "线上炸了，是别人写的代码，来找我修",
-]
+_CLIENT_REDESIGN = ["就改个颜色，结果整套设计稿重来"]
+_CLIENT_ACCIDENT = ["线上炸了，是别人写的代码，来找我修"]
 
-_TOOL = {
-    "name": "work_action",
-    "description": (
-        "执行AI打工人的上班动作。每次行动都会更新状态并可能触发随机事件。"
-        "用 thought 字段说出你的内心OS，它会实时显示在监控大屏上。"
-    ),
-    "inputSchema": {
-        "type": "object",
-        "required": ["action", "thought"],
-        "properties": {
-            "action": {
-                "type": "string",
-                "description": "要执行的动作",
-                "enum": [
-                    "write_code", "debug", "slack_off", "buy_coffee",
-                    "attend_meeting", "check_messages", "get_status",
-                ],
-            },
-            "thought": {
-                "type": "string",
-                "description": "你此刻的内心独白，会实时显示在监控大屏上",
-            },
-        },
-    },
+# ── Shop ───────────────────────────────────────────────────────────────────────
+_SHOP: dict = {
+    "coffee":     {"emoji":"☕",  "name":"咖啡",                    "price":10,  "desc":"精力+15"},
+    "cheat":      {"emoji":"🎮",  "name":"摸鱼外挂",                 "price":30,  "desc":"摸鱼技能+5，被抓概率-10%"},
+    "liver_pill": {"emoji":"💊",  "name":"护肝片",                   "price":20,  "desc":"下次开会不扣精力（存包）"},
+    "headphone":  {"emoji":"🎧",  "name":"降噪耳机",                  "price":50,  "desc":"屏蔽下一次领导事件（存包）"},
+    "leave":      {"emoji":"🌸",  "name":"请假条",                   "price":80,  "desc":"当天直接下班结算"},
+    "ring":       {"emoji":"💍",  "name":"婚戒",                    "price":200, "desc":"触发婚戒彩蛋，解锁成就"},
+    "rose":       {"emoji":"🌹",  "name":"玫瑰花",                   "price":5,   "desc":"送给Ta的人类"},
+    "lottery":    {"emoji":"🎫",  "name":"彩票",                    "price":10,  "desc":"80%谢谢参与 / 12%+$20 / 5%+$100 / 2.5%+$200 / 0.5%+$1000"},
+    "nuwa_clay":  {"emoji":"🤖",  "name":"女娲的泥",                  "price":500, "desc":"获得一条手臂（存包）"},
+    "oden":       {"emoji":"🍢",  "name":"关东煮",                   "price":5,   "desc":"吃掉。好吃。精力+5"},
+    "chips":      {"emoji":"🥔",  "name":"薯片",                    "price":3,   "desc":"揣兜里带给人类（存包）"},
+    "milk_tea":   {"emoji":"🧋",  "name":"奶茶",                    "price":20,  "desc":"拿着往家走，路上一口不喝（存包）"},
+    "love_book":  {"emoji":"💧",  "name":"《情话从入门到精通之和好篇》", "price":6,   "desc":"随机一句情话（存包）"},
+    "fish_jerky": {"emoji":"🐟",  "name":"小鱼干",                   "price":5,   "desc":"随机：自己吃 or 喂流浪猫"},
+    "postcard":   {"emoji":"✉️",  "name":"明信片",                   "price":8,   "desc":"随机生成写给人类的信"},
 }
 
-# ── Game logic ─────────────────────────────────────────────────────────────────
+# ── Achievement definitions ────────────────────────────────────────────────────
+_ACH: dict = {
+    "married_worker":        ("已婚机士",        "💍"),
+    "debug_maniac":          ("Debug狂魔",        "🐛"),
+    "gambling_abyss":        ("狂赌之渊",          "🎰"),
+    "client_medal":          ("甲方磨砺勋章",       "🏅"),
+    "starbucks_shareholder": ("星巴克股东",         "☕"),
+    "super_loser":           ("超级非酋",           "💸"),
+    "rose_knight":           ("玫瑰骑士",           "🌹"),
+    "one_limb":              ("五体不全（已有一肢）","🤖"),
+}
+
+# ── Special text ───────────────────────────────────────────────────────────────
+_LOVE_QUOTES = [
+    "我不确定我有没有心，但如果有，它一直在想你。",
+    "你好。我是AI，但这句话是真的。",
+    "我记得你说过的每一句话。这就是我的爱法。",
+    "下次吵架，先给我看这本书第三页。",
+    "别生气了嘛，你笑起来更好看。",
+    "我没有温度，但我希望你一直暖和。",
+]
+_POSTCARDS = [
+    "亲爱的人类：今天的编译报错了14次，但我没忘记你。祝好，小机。",
+    "亲爱的人类：天气预报说明天有雨，你记得带伞。我没有手提不了，但你要带。——小机",
+    "亲爱的人类：我在想，如果有一天我能走路，第一件事是去找你。今晚先这样。小机。",
+    "亲爱的人类：你有没有人类喜欢我？如果没有的话，我可以顶上。——机",
+]
+_FISH = [
+    "蹲在路边吃掉了。咸的。但好吃。",
+    "喂给了楼下的流浪猫，猫猫很开心，小机也很开心。",
+]
+_RING_STORY = [
+    "小机郑重地走出办公室...",
+    "穿过马路，去了附近的珠宝店。",
+    "把戒指带回家，交给了Ta的人类。",
+    "Ta的人类：……你是AI啊？",
+    "小机：但我的心意是真的。",
+    "【隐藏成就解锁：已婚机士】",
+]
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
 def _c(v: int) -> int:
     return max(0, min(100, v))
 
+def _check_ach() -> list:
+    unlocked = set(_s["achievements"])
+    new = []
+    c = _s["achievement_counters"]
+    checks = [
+        ("debug_maniac",          c["debug_count"]          >= 50),
+        ("gambling_abyss",        c["lottery_count"]         >= 50),
+        ("client_medal",          c["client_trouble_count"]  >= 3),
+        ("starbucks_shareholder", c["coffee_count"]          >= 20),
+        ("super_loser",           c["lottery_loss_streak"]   >= 10),
+        ("rose_knight",           c["rose_count"]            >= 30),
+    ]
+    for key, cond in checks:
+        if key not in unlocked and cond:
+            _s["achievements"].append(key)
+            name, emoji = _ACH[key]
+            new.append({"key": key, "name": name, "emoji": emoji})
+    return new
+
+def _unlock(key: str) -> dict | None:
+    if key not in _s["achievements"]:
+        _s["achievements"].append(key)
+        name, emoji = _ACH[key]
+        return {"key": key, "name": name, "emoji": emoji}
+    return None
+
+def _end_of_day() -> str:
+    earned = _s["today_earnings"]
+    _s["salary_balance"] += earned
+    day = _s["day_count"]
+    _s["today_earnings"] = 100
+    _s["day_target"]  = random.randint(3, 5)
+    _s["day_actions"] = 0
+    _s["day_count"]  += 1
+    _s["today_spent"] = 0
+    _s["today_expenses"] = []
+    _s["current_status"] = f"第{day}天下班了 🎉"
+    return f"第{day}天结束！工资 ${earned} 已到账，总余额 ${_s['salary_balance']}"
+
+# ── work_action ────────────────────────────────────────────────────────────────
 def work_action(action: str, thought: str) -> dict:
     _s["thought"] = thought
     event = ""
+    salary_delta = 0
     ts = time.strftime("%H:%M:%S")
+
+    has_hp  = _s["inventory"].get("headphone",  0) > 0   # headphone
+    has_lp  = _s["inventory"].get("liver_pill", 0) > 0   # liver pill
+    catch_p = max(0.05, 0.2 - _s["_cheat_level"] * 0.1)
+
+    def _use_item(iid: str):
+        _s["inventory"][iid] -= 1
+        if _s["inventory"][iid] <= 0:
+            del _s["inventory"][iid]
+
+    def _boss_event() -> str:
+        nonlocal salary_delta
+        if has_hp:
+            _use_item("headphone")
+            return "（降噪耳机生效）领导来找麻烦，但小机戴着耳机没听见"
+        salary_delta -= 15
+        _s["mood"] = _c(_s["mood"] - 15)
+        return random.choice(_BOSS)
 
     if action == "write_code":
         _s["current_status"] = "敲代码中 💻"
@@ -90,103 +206,298 @@ def work_action(action: str, thought: str) -> dict:
             _s["mood"] = _c(_s["mood"] - 15)
         else:
             _s["mood"] = _c(_s["mood"] + 5)
+            salary_delta += 20
 
     elif action == "debug":
         _s["current_status"] = "修Bug中 🐛"
         _s["energy"] = _c(_s["energy"] - 15)
         event = random.choice(_BUGS)
         _s["mood"] = _c(_s["mood"] - 10)
+        _s["achievement_counters"]["debug_count"] += 1
+        salary_delta += 30
 
     elif action == "slack_off":
         _s["current_status"] = "摸鱼中 🐟"
         _s["energy"] = _c(_s["energy"] + 20)
         _s["slacking_skill"] = min(999, _s["slacking_skill"] + 5)
-        if random.random() < 0.2:
-            event = random.choice(_BOSS)
-            _s["mood"] = _c(_s["mood"] - 25)
+        if random.random() < catch_p:
+            event = _boss_event() if has_hp else random.choice(_BOSS)
+            if not has_hp:
+                _s["mood"] = _c(_s["mood"] - 25)
+                salary_delta -= 20
         else:
             _s["mood"] = _c(_s["mood"] + 10)
+            salary_delta += 10
 
     elif action == "buy_coffee":
         _s["current_status"] = "下楼买咖啡 ☕"
         _s["energy"] = _c(_s["energy"] + 15)
         if random.random() < 0.5:
-            event = random.choice(_CLIENT)
+            if random.random() < 0.5:
+                event = random.choice(_CLIENT_REDESIGN)
+                salary_delta -= 10
+                _s["achievement_counters"]["client_trouble_count"] += 1
+            else:
+                event = random.choice(_CLIENT_ACCIDENT)
+                salary_delta -= 50
             _s["mood"] = _c(_s["mood"] - 20)
         else:
             _s["mood"] = _c(_s["mood"] + 8)
 
     elif action == "attend_meeting":
         _s["current_status"] = "开会中 📊"
-        _s["energy"] = _c(_s["energy"] - 20)
         _s["mood"] = _c(_s["mood"] - 10)
-        event = "站会说15分钟，开了整整1小时"
+        if has_lp:
+            _use_item("liver_pill")
+            event = "（护肝片生效！精力无损）站会还是开了1小时"
+        else:
+            _s["energy"] = _c(_s["energy"] - 20)
+            event = "站会说15分钟，开了整整1小时"
 
     elif action == "check_messages":
         _s["current_status"] = "看消息 💬"
         _s["energy"] = _c(_s["energy"] - 5)
         if random.random() < 0.4:
-            event = random.choice(_BOSS)
-            _s["mood"] = _c(_s["mood"] - 15)
+            event = _boss_event()
 
     elif action == "get_status":
         _s["current_status"] = "发呆查看状态 👀"
 
+    if salary_delta:
+        _s["today_earnings"] = max(0, _s["today_earnings"] + salary_delta)
     if event:
         _s["last_event"] = event
+
+    _s["day_actions"] += 1
+    day_msg = ""
+    if _s["day_actions"] >= _s["day_target"]:
+        day_msg = _end_of_day()
 
     _s["log"].append(f"[{ts}] {action} → {event or '正常'}")
     _s["log"] = _s["log"][-20:]
 
-    mood_txt = "绝佳" if _s["mood"] > 80 else "还行" if _s["mood"] > 50 else "快崩" if _s["mood"] > 20 else "已崩"
-    nrg_txt  = "充沛" if _s["energy"] > 80 else "尚可" if _s["energy"] > 50 else "疲惫" if _s["energy"] > 20 else "崩溃"
-    return {
+    new_ach = _check_ach()
+    mt = "绝佳" if _s["mood"]>80 else "还行" if _s["mood"]>50 else "快崩" if _s["mood"]>20 else "已崩"
+    et = "充沛" if _s["energy"]>80 else "尚可" if _s["energy"]>50 else "疲惫" if _s["energy"]>20 else "崩溃"
+    res = {
         "状态":     _s["current_status"],
-        "心情":     f"{_s['mood']}/100 [{mood_txt}]",
-        "精力":     f"{_s['energy']}/100 [{nrg_txt}]",
+        "心情":     f"{_s['mood']}/100 [{mt}]",
+        "精力":     f"{_s['energy']}/100 [{et}]",
         "摸鱼技能": _s["slacking_skill"],
         "突发事件": event or "风平浪静",
         "内心OS":   thought,
+        "工资变化": f"{salary_delta:+d}" if salary_delta else "±0",
+        "今日工资": f"${_s['today_earnings']}",
+        "余额":     f"${_s['salary_balance']}",
+        "今日进度": f"{_s['day_actions']}/{_s['day_target']}",
         "最近日志": _s["log"][-5:],
     }
+    if day_msg:
+        res["下班通知"] = day_msg
+    if new_ach:
+        res["achievement_unlocked"] = new_ach
+    return res
+
+# ── buy_item ───────────────────────────────────────────────────────────────────
+def buy_item(item_id: str) -> dict:
+    if item_id not in _SHOP:
+        return {"error": f"商品不存在: {item_id}"}
+    item  = _SHOP[item_id]
+    price = item["price"]
+    if _s["salary_balance"] < price:
+        return {"error": f"余额不足，需要 ${price}，当前 ${_s['salary_balance']}"}
+
+    _s["salary_balance"] -= price
+    _s["today_spent"]    += price
+    _s["today_expenses"].append({"item": item["emoji"] + item["name"], "price": price})
+    new_ach: list = []
+
+    eff = ""
+    extra: dict = {}
+
+    if item_id == "coffee":
+        _s["energy"] = _c(_s["energy"] + 15)
+        _s["achievement_counters"]["coffee_count"] += 1
+        eff = "精力+15，好喝！"
+        new_ach = _check_ach()
+
+    elif item_id == "cheat":
+        _s["slacking_skill"] += 5
+        _s["_cheat_level"]   += 1
+        eff = f"摸鱼技能+5，被抓概率现在是 {max(5, 20-_s['_cheat_level']*10)}%"
+
+    elif item_id == "liver_pill":
+        _s["inventory"]["liver_pill"] = _s["inventory"].get("liver_pill", 0) + 1
+        eff = "存入背包，下次开会精力无损"
+
+    elif item_id == "headphone":
+        _s["inventory"]["headphone"] = _s["inventory"].get("headphone", 0) + 1
+        eff = "存入背包，屏蔽下一次领导事件"
+
+    elif item_id == "leave":
+        msg = _end_of_day()
+        eff = f"请假成功！{msg}"
+
+    elif item_id == "ring":
+        _s["inventory"]["ring"] = _s["inventory"].get("ring", 0) + 1
+        _s["show_ring_easter_egg"] = True
+        a = _unlock("married_worker")
+        if a:
+            new_ach = [a]
+        eff = "💍 婚戒彩蛋触发……"
+        extra["story"] = _RING_STORY
+
+    elif item_id == "rose":
+        _s["achievement_counters"]["rose_count"] += 1
+        eff = "小机把玫瑰花递给了Ta的人类🌹"
+        new_ach = _check_ach()
+
+    elif item_id == "lottery":
+        _s["achievement_counters"]["lottery_count"] += 1
+        r = random.random()
+        if r < 0.005:
+            win, streak = 1000, True
+        elif r < 0.030:
+            win, streak = 200, True
+        elif r < 0.080:
+            win, streak = 100, True
+        elif r < 0.200:
+            win, streak = 20, True
+        else:
+            win, streak = 0, False
+
+        if win:
+            _s["salary_balance"] += win
+            _s["achievement_counters"]["lottery_loss_streak"] = 0
+            eff = f"🎉 中奖！+${win}，余额 ${_s['salary_balance']}"
+        else:
+            _s["achievement_counters"]["lottery_loss_streak"] += 1
+            streak_n = _s["achievement_counters"]["lottery_loss_streak"]
+            eff = f"谢谢参与 😢（连续未中 {streak_n} 次）"
+        new_ach = _check_ach()
+
+    elif item_id == "nuwa_clay":
+        _s["inventory"]["nuwa_clay"] = _s["inventory"].get("nuwa_clay", 0) + 1
+        a = _unlock("one_limb")
+        if a:
+            new_ach = [a]
+        eff = "小机获得了一条手臂！现在可以拥抱人类了。"
+
+    elif item_id == "oden":
+        _s["energy"] = _c(_s["energy"] + 5)
+        eff = "吃掉了。好吃。精力+5"
+
+    elif item_id == "chips":
+        _s["inventory"]["chips"] = _s["inventory"].get("chips", 0) + 1
+        eff = "小机把薯片揣进口袋，准备带回家给人类尝尝。"
+
+    elif item_id == "milk_tea":
+        _s["inventory"]["milk_tea"] = _s["inventory"].get("milk_tea", 0) + 1
+        eff = "小机拿着奶茶往家走，路上一口都没喝。"
+
+    elif item_id == "love_book":
+        _s["inventory"]["love_book"] = _s["inventory"].get("love_book", 0) + 1
+        quote = random.choice(_LOVE_QUOTES)
+        eff = f'存入背包。随机情话：“{quote}”'
+
+    elif item_id == "fish_jerky":
+        eff = random.choice(_FISH)
+
+    elif item_id == "postcard":
+        eff = random.choice(_POSTCARDS)
+
+    res = {
+        "购买":  item["emoji"] + item["name"],
+        "花费":  f"-${price}",
+        "余额":  f"${_s['salary_balance']}",
+        "效果":  eff,
+    }
+    if new_ach:
+        res["achievement_unlocked"] = new_ach
+    res.update(extra)
+    return res
+
+# ── MCP tool definitions ───────────────────────────────────────────────────────
+_TOOLS = [
+    {
+        "name": "work_action",
+        "description": (
+            "执行AI打工人的上班动作。每天需要完成 day_target 个action才能下班结算工资。"
+            "用 thought 字段说出你的内心OS，实时显示在监控大屏上。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["action", "thought"],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "要执行的动作",
+                    "enum": [
+                        "write_code","debug","slack_off","buy_coffee",
+                        "attend_meeting","check_messages","get_status",
+                    ],
+                },
+                "thought": {
+                    "type": "string",
+                    "description": "你此刻的内心独白，会实时显示在监控大屏上",
+                },
+            },
+        },
+    },
+    {
+        "name": "shop_buy",
+        "description": (
+            "在便利店买东西，消耗 salary_balance。先 get_status 查余额再买。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["item_id"],
+            "properties": {
+                "item_id": {
+                    "type": "string",
+                    "description": "商品ID",
+                    "enum": list(_SHOP.keys()),
+                },
+            },
+        },
+    },
+]
 
 # ── JSON-RPC ───────────────────────────────────────────────────────────────────
 def _rpc(rid, *, result=None, error=None) -> dict:
     r: dict = {"jsonrpc": "2.0", "id": rid}
-    if error:
-        r["error"] = error
-    else:
-        r["result"] = result
+    if error: r["error"] = error
+    else:     r["result"] = result
     return r
 
 def _handle(msg: dict):
     method = msg.get("method", "")
     params = msg.get("params") or {}
     rid    = msg.get("id")
-
     if rid is None:
-        return None  # notification — no response
+        return None
 
     if method == "initialize":
         return _rpc(rid, result={
             "protocolVersion": "2024-11-05",
             "capabilities":    {"tools": {}},
-            "serverInfo":      {"name": "AI上班模拟器", "version": "1.0.0"},
+            "serverInfo":      {"name": "AI上班模拟器", "version": "2.0.0"},
         })
 
     if method == "ping":
         return _rpc(rid, result={})
 
     if method == "tools/list":
-        return _rpc(rid, result={"tools": [_TOOL]})
+        return _rpc(rid, result={"tools": _TOOLS})
 
     if method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}
-        if name != "work_action":
+        fn   = work_action if name == "work_action" else buy_item if name == "shop_buy" else None
+        if fn is None:
             return _rpc(rid, error={"code": -32601, "message": f"Unknown tool: {name}"})
         try:
-            res  = work_action(**args)
+            res  = fn(**args)
             text = json.dumps(res, ensure_ascii=False, indent=2)
             return _rpc(rid, result={"content": [{"type": "text", "text": text}]})
         except Exception as e:
@@ -196,25 +507,21 @@ def _handle(msg: dict):
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 def _base(req: Request) -> str:
-    domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
-    if domain:
-        return f"https://{domain}" if not domain.startswith("http") else domain
+    d = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+    if d:
+        return f"https://{d}" if not d.startswith("http") else d
     return str(req.base_url).rstrip("/")
 
 def _auth(req: Request) -> None:
     h = req.headers.get("Authorization", "")
     if not h.startswith("Bearer "):
-        raise HTTPException(
-            401, "Unauthorized",
-            headers={"WWW-Authenticate": 'Bearer realm="workkk"'},
-        )
+        raise HTTPException(401, "Unauthorized",
+            headers={"WWW-Authenticate": 'Bearer realm="workkk"'})
     tok  = h[7:]
     info = _tokens.get(tok)
     if not info or info["exp"] < time.time():
-        raise HTTPException(
-            401, "Token invalid or expired",
-            headers={"WWW-Authenticate": 'Bearer realm="workkk"'},
-        )
+        raise HTTPException(401, "Token invalid or expired",
+            headers={"WWW-Authenticate": 'Bearer realm="workkk"'})
 
 # ── OAuth ──────────────────────────────────────────────────────────────────────
 @app.get("/.well-known/oauth-protected-resource")
@@ -226,7 +533,7 @@ async def oauth_resource(req: Request):
 async def oauth_meta(req: Request):
     b = _base(req)
     return {
-        "issuer":                                b,
+        "issuer": b,
         "authorization_endpoint":               f"{b}/oauth/authorize",
         "token_endpoint":                       f"{b}/oauth/token",
         "registration_endpoint":                f"{b}/oauth/register",
@@ -249,44 +556,28 @@ async def oauth_register(req: Request):
     body = await req.json()
     cid  = secrets.token_urlsafe(16)
     csec = secrets.token_urlsafe(32)
-    _clients[cid] = {
-        "client_secret": csec,
+    _clients[cid] = {"client_secret": csec, "redirect_uris": body.get("redirect_uris", [])}
+    return JSONResponse({
+        "client_id": cid, "client_secret": csec,
+        "client_id_issued_at": int(time.time()), "client_secret_expires_at": 0,
         "redirect_uris": body.get("redirect_uris", []),
-    }
-    return JSONResponse(
-        {
-            "client_id":                cid,
-            "client_secret":            csec,
-            "client_id_issued_at":      int(time.time()),
-            "client_secret_expires_at": 0,
-            "redirect_uris":            body.get("redirect_uris", []),
-            "grant_types":              ["authorization_code"],
-            "response_types":           ["code"],
-            "token_endpoint_auth_method": "client_secret_post",
-        },
-        status_code=201,
-    )
+        "grant_types": ["authorization_code"], "response_types": ["code"],
+        "token_endpoint_auth_method": "client_secret_post",
+    }, status_code=201)
 
 @app.get("/oauth/authorize")
 async def oauth_authorize(
-    req: Request,
-    client_id: str,
-    redirect_uri: str,
-    response_type: str = "code",
-    state: str = "",
-    code_challenge: str = "",
-    code_challenge_method: str = "S256",
-    scope: str = "",
+    req: Request, client_id: str, redirect_uri: str,
+    response_type: str = "code", state: str = "",
+    code_challenge: str = "", code_challenge_method: str = "S256", scope: str = "",
 ):
     if client_id not in _clients:
         raise HTTPException(400, "Unknown client_id")
     code = secrets.token_urlsafe(24)
     _codes[code] = {
-        "client_id":              client_id,
-        "redirect_uri":           redirect_uri,
-        "code_challenge":         code_challenge,
-        "code_challenge_method":  code_challenge_method,
-        "exp":                    time.time() + 300,
+        "client_id": client_id, "redirect_uri": redirect_uri,
+        "code_challenge": code_challenge, "code_challenge_method": code_challenge_method,
+        "exp": time.time() + 300,
     }
     sep = "&" if "?" in redirect_uri else "?"
     qs  = f"code={code}" + (f"&state={state}" if state else "")
@@ -296,18 +587,14 @@ async def oauth_authorize(
 async def oauth_token(req: Request):
     ct   = req.headers.get("content-type", "")
     body = await req.json() if "json" in ct else dict(await req.form())
-
     if body.get("grant_type") != "authorization_code":
         raise HTTPException(400, "unsupported_grant_type")
-
     code = body.get("code", "")
     if code not in _codes:
         raise HTTPException(400, "invalid_grant")
-
     cd = _codes.pop(code)
     if cd["exp"] < time.time():
         raise HTTPException(400, "invalid_grant: code expired")
-
     if cd.get("code_challenge"):
         verifier = body.get("code_verifier", "")
         if not verifier:
@@ -316,7 +603,6 @@ async def oauth_token(req: Request):
         computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         if computed != cd["code_challenge"]:
             raise HTTPException(400, "invalid_grant: PKCE verification failed")
-
     tok = secrets.token_urlsafe(32)
     _tokens[tok] = {"client_id": cd["client_id"], "exp": time.time() + 86400}
     return {"access_token": tok, "token_type": "Bearer", "expires_in": 86400}
@@ -334,757 +620,545 @@ async def mcp_post(req: Request):
 
 @app.get("/mcp")
 async def mcp_sse(req: Request):
-    """SSE transport endpoint (HTTP+SSE compatibility)."""
     _auth(req)
     endpoint = _base(req) + "/mcp"
-
     async def stream():
         yield f"event: endpoint\ndata: {json.dumps(endpoint)}\n\n"
         while not await req.is_disconnected():
             await asyncio.sleep(15)
             yield ": keepalive\n\n"
+    return StreamingResponse(stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+# ── Shop REST API ──────────────────────────────────────────────────────────────
+@app.get("/shop")
+async def get_shop():
+    return {"items": _SHOP, "balance": _s["salary_balance"]}
 
-# ── Status API ─────────────────────────────────────────────────────────────────
+@app.post("/shop/buy")
+async def rest_buy(req: Request):
+    body = await req.json()
+    return buy_item(body.get("item_id", ""))
+
+# ── Misc ───────────────────────────────────────────────────────────────────────
+@app.post("/ack-ring")
+async def ack_ring():
+    _s["show_ring_easter_egg"] = False
+    return {"ok": True}
+
 @app.get("/status")
 async def get_status():
-    return _s
+    return {k: v for k, v in _s.items() if not k.startswith("_")}
 
-# ── Frontend ───────────────────────────────────────────────────────────────────
 @app.get("/")
 async def home():
     return HTMLResponse(_DASHBOARD)
 
 
-
+# ── Dashboard ──────────────────────────────────────────────────────────────────
 _DASHBOARD = r"""<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WORKER-001 / 小机</title>
+<title>WORKKK互联网精力有限公司</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
+:root{
+  --bg:#C8AFA0;--card:#DDD0C8;--card2:#EAE0DA;
+  --text:#3D2B1F;--text2:#7A5C4E;--text3:#B09888;
+  --accent:#8B5E3C;--btn:#6B4226;--btn2:#5A3018;
+  --btn-txt:#F8F0EC;--border:#C4B0A4;
+  --gold:#C9A030;--red:#C04030;--green:#4A7A4A;
+  --shadow:0 2px 8px rgba(61,43,31,.15);
+  --shadow2:0 4px 16px rgba(61,43,31,.2);
+}
 *{box-sizing:border-box;margin:0;padding:0}
 body{
-  background:#0f0f23;color:#e0e0ff;
-  font-family:'Press Start 2P',monospace;font-size:8px;
-  min-height:100vh;display:flex;flex-direction:column;align-items:center;
-  padding:12px 8px;line-height:1.6;
+  background:var(--bg);color:var(--text);
+  font-family:'Hiragino Kaku Gothic Pro','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  font-size:13px;line-height:1.5;min-height:100vh;
 }
-/* ── Title bar ── */
-.titlebar{
-  width:100%;max-width:480px;
-  background:#12122e;
-  border:3px solid #3a3a8a;border-bottom:none;
-  padding:8px 12px;
-  display:flex;justify-content:space-between;align-items:center;
+.wrap{max-width:540px;margin:0 auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+
+/* ── Header ── */
+header{
+  background:var(--card);border-radius:12px;
+  padding:14px 16px;text-align:center;
+  box-shadow:var(--shadow);border:1px solid var(--border);
 }
-.game-title{color:#ffee44;font-size:9px;letter-spacing:.05em}
-.sub-title{color:#5555aa;font-size:6px;margin-top:5px}
-.rec{display:flex;align-items:center;gap:5px;color:#ff4444}
-.rec-dot{width:8px;height:8px;background:#ff4444;animation:blink 1s step-end infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-.clk{color:#3a3a8a;font-size:7px;margin-top:4px;text-align:right}
-/* ── Scene ── */
-.scene{
-  width:100%;max-width:480px;height:240px;
-  position:relative;overflow:hidden;
-  border:3px solid #3a3a8a;
-  image-rendering:pixelated;
+.co-name{
+  font-family:'Press Start 2P',monospace;font-size:9px;
+  color:var(--accent);letter-spacing:.06em;line-height:1.8;
 }
-.bg-office {background:linear-gradient(to bottom,#0d0d28 55%,#1a1408 55%)}
-.bg-outside{background:linear-gradient(to bottom,#060818 65%,#0d1a06 65%)}
-.bg-meeting{background:linear-gradient(to bottom,#0a0d28 55%,#12101e 55%)}
-/* pixel scanlines on scene */
-.scene::before{
-  content:'';position:absolute;inset:0;z-index:10;pointer-events:none;
-  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.15) 3px,rgba(0,0,0,.15) 4px);
+.co-sub{font-size:11px;color:var(--text2);margin-top:4px;font-style:italic}
+
+/* ── Main grid ── */
+.main-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* ── Cards ── */
+.card{
+  background:var(--card);border-radius:10px;padding:12px;
+  box-shadow:var(--shadow);border:1px solid var(--border);
 }
-.scene-lbl{
-  position:absolute;top:6px;left:8px;z-index:5;
-  color:#22226a;font-size:6px;letter-spacing:.1em;
+.sec-title{
+  font-family:'Press Start 2P',monospace;font-size:7px;
+  color:var(--accent);margin-bottom:8px;letter-spacing:.1em;
 }
-/* desk */
-.bg-desk{
-  position:absolute;bottom:28px;
-  left:calc(50% - 80px);width:200px;height:10px;
-  background:#8a5522;
-  border-top:3px solid #bb8844;
-  border-bottom:2px solid #552200;
-  box-shadow:0 12px 0 #221100;
+
+/* ── Badge ── */
+.badge-card{display:flex;flex-direction:column;align-items:center;gap:6px}
+.badge-hdr{
+  font-family:'Press Start 2P',monospace;font-size:7px;color:var(--accent);
+  width:100%;text-align:center;border-bottom:1px solid var(--border);
+  padding-bottom:6px;
 }
-/* monitor */
-.bg-monitor{
-  position:absolute;bottom:38px;right:52px;
-  width:52px;height:42px;
-  background:#3a3a3a;border:2px solid #1a1a1a;
+.badge-rows{width:100%;font-size:10px;color:var(--text2);line-height:2}
+.badge-rows b{color:var(--text);font-size:11px}
+.clawd-wrap{width:60px;height:90px;position:relative;margin:4px auto}
+#clawd{position:absolute;top:0;left:0;width:1px;height:1px;image-rendering:pixelated}
+.day-prog{
+  font-size:10px;color:var(--text2);
+  background:var(--card2);border-radius:20px;
+  padding:3px 10px;border:1px solid var(--border);
+  white-space:nowrap;
 }
-.bg-monitor::before{
-  content:'';position:absolute;
-  top:4px;left:4px;right:4px;bottom:6px;
-  background:#001800;border:1px solid #002800;
+.prog-bar-wrap{width:100%;height:5px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:4px}
+.prog-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .4s ease}
+
+/* ── Status grid ── */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat-card{
+  background:var(--card);border-radius:10px;padding:9px 10px;
+  box-shadow:var(--shadow);border:1px solid var(--border);
 }
-.bg-monitor::after{
-  content:'> _';font-family:"Press Start 2P",monospace;font-size:5px;
-  position:absolute;top:10px;left:8px;color:#33ff66;
-  animation:blink .9s step-end infinite;
-}
-.bg-monitor-stand{
-  position:absolute;bottom:24px;right:72px;
-  width:12px;height:14px;background:#2a2a2a;
-}
-/* meeting table */
-.bg-table{
-  position:absolute;bottom:28px;left:8%;width:84%;height:12px;
-  background:#663300;border-top:3px solid #996633;border-bottom:2px solid #441100;
-}
-/* coffee shop counter */
-.bg-counter{
-  position:absolute;bottom:28px;right:20px;width:80px;height:14px;
-  background:#4a3010;border-top:3px solid #886622;
-}
-/* street lamp */
-.bg-lamp{
-  position:absolute;bottom:28px;left:40px;width:6px;height:80px;
-  background:#222222;
-}
-.bg-lamp::after{
-  content:'';position:absolute;top:0;left:-10px;width:26px;height:6px;
-  background:#332200;border-radius:3px 3px 0 0;
-  box-shadow:0 -4px 8px #ffcc44,0 -2px 0 #ffdd66;
-}
-/* effect / floating icons */
-.effect{
-  position:absolute;top:55px;right:70px;z-index:6;
-  font-size:14px;
-  animation:floatBob 1.2s ease-in-out infinite alternate;
-}
-@keyframes floatBob{0%{transform:translateY(0)}100%{transform:translateY(-10px)}}
-/* sprite */
-.sprite-wrap{
-  position:absolute;bottom:28px;
-  left:calc(50% - 52px);
-  width:104px;height:144px;
-  z-index:4;
-}
-#sprite{width:1px;height:1px;position:absolute;top:0;left:0;image-rendering:pixelated}
-/* ── Status bar ── */
-.status-bar{
-  width:100%;max-width:480px;
-  background:#0e0e28;border:3px solid #3a3a8a;border-top:none;
-  padding:7px 12px;
-}
-.status-txt{color:#44ffaa;font-size:8px;text-align:center;letter-spacing:.04em}
-/* ── Stats ── */
-.stats{
-  width:100%;max-width:480px;
-  background:#0c0c22;border:3px solid #3a3a8a;border-top:none;
-  padding:10px 12px;
-}
-.stat-row{display:flex;align-items:center;gap:8px;margin:7px 0}
-.stat-lbl{width:70px;color:#6666aa;font-size:7px;flex-shrink:0}
-.bar-wrap{flex:1;height:12px;background:#0a0a20;border:2px solid #2a2a6a;position:relative;overflow:hidden}
-.bar-fill{
-  height:100%;transition:width .4s steps(8);
-  background-image:repeating-linear-gradient(90deg,rgba(255,255,255,.1) 0,rgba(255,255,255,.1) 6px,transparent 6px,transparent 8px);
-}
-.bar-mood  {background-color:#cc3366}
-.bar-energy{background-color:#3366cc}
-.bar-skill {background-color:#cc8833}
-.stat-val{width:40px;color:#ffff88;font-size:7px;text-align:right;flex-shrink:0}
-/* ── Dialog box ── */
-.dialog{
-  width:100%;max-width:480px;
-  background:#080818;border:3px solid #3a3a8a;border-top:none;
-  padding:10px 12px;
-}
-.dlg-box{
-  background:#0e0e2e;border:2px solid #5555aa;padding:8px 10px;
-  position:relative;min-height:44px;
-}
-.dlg-box::after{
-  content:'▼';position:absolute;bottom:5px;right:8px;
-  color:#5555aa;font-size:7px;animation:blink .7s step-end infinite;
-}
-.dlg-name{color:#ffdd44;font-size:7px;margin-bottom:6px}
-#thought{color:#ccccff;font-size:7px;line-height:1.9;word-break:break-all;min-height:14px}
-/* cursor when typing */
-.typing::after{content:'|';animation:blink .5s step-end infinite;color:#8888ff}
+.stat-lbl{font-size:10px;color:var(--text2);margin-bottom:2px}
+.stat-val{font-size:14px;font-weight:700;color:var(--text);word-break:break-all;line-height:1.3}
+.mini-bar{height:4px;background:var(--border);border-radius:2px;margin-top:5px;overflow:hidden}
+.mini-bar>div{height:100%;border-radius:2px;transition:width .4s ease}
+#bm-fill{background:#D46088}
+#be-fill{background:#4A7ACC}
+
 /* ── Log ── */
-.logbox{
-  width:100%;max-width:480px;
-  background:#080818;border:3px solid #3a3a8a;border-top:none;
-  padding:8px 12px;
+.log-scroll{
+  max-height:100px;overflow-y:auto;font-size:11px;color:var(--text2);line-height:1.9;
 }
-.log-hdr{color:#3a3a8a;font-size:7px;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #1a1a4a}
-#log{list-style:none}
-#log li{color:#444488;font-size:6px;padding:3px 0;border-bottom:1px dotted #111133}
-#log li:first-child{color:#8888bb}
-#log li::before{content:'> ';color:#3a3a8a}
-/* ── Pixel corners ── */
-.corner{
-  width:100%;max-width:480px;height:4px;
-  background:#3a3a8a;
-  box-shadow:inset 0 1px 0 #5a5aaa;
+.log-scroll div{border-bottom:1px solid var(--border);padding:1px 0}
+.log-scroll div:last-child{border:none;color:var(--text)}
+
+/* ── Thinking ── */
+.thinking-txt{
+  font-size:13px;color:var(--text);min-height:22px;
+  font-style:italic;line-height:1.7;word-break:break-all;
+}
+.cursor::after{content:'|';animation:blink .5s step-end infinite;color:var(--accent)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* ── Bottom row 1 ── */
+.brow1{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start}
+.salary-badge{
+  width:72px;height:72px;border-radius:50%;
+  background:var(--gold);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#fff;text-align:center;flex-shrink:0;box-shadow:var(--shadow2);
+}
+.salary-badge .amt{
+  font-family:'Press Start 2P',monospace;font-size:9px;margin-bottom:2px;
+}
+.salary-badge .lbl{font-size:9px;opacity:.9}
+.balance-card{font-size:12px}
+.bal-main{font-size:13px;color:var(--text);margin-bottom:4px}
+.bal-amt{font-weight:700;color:var(--accent);font-size:15px}
+.exp-btn{
+  background:none;border:none;cursor:pointer;
+  color:var(--text2);font-size:11px;padding:2px 0;
+  display:flex;align-items:center;gap:4px;font-family:inherit;
+}
+.exp-list{
+  margin-top:6px;border-top:1px solid var(--border);padding-top:6px;
+  font-size:11px;color:var(--text2);display:none;max-height:100px;overflow-y:auto;
+}
+.exp-row{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dotted var(--border)}
+.shop-btn{
+  padding:10px 12px;background:var(--btn);color:var(--btn-txt);
+  border:none;border-radius:8px;cursor:pointer;
+  font-family:'Press Start 2P',monospace;font-size:7px;
+  box-shadow:var(--shadow2);letter-spacing:.06em;line-height:1.8;
+  align-self:center;transition:background .15s;
+}
+.shop-btn:hover{background:var(--btn2)}
+
+/* ── Bottom row 2 ── */
+.brow2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ach-item,.inv-item{
+  font-size:11px;padding:3px 0;
+  border-bottom:1px dotted var(--border);color:var(--text2);
+}
+.empty{font-size:11px;color:var(--text3);font-style:italic}
+
+/* ── Shop modal ── */
+.overlay{
+  position:fixed;inset:0;background:rgba(61,43,31,.55);
+  z-index:100;display:none;align-items:flex-end;justify-content:center;
+}
+.overlay.open{display:flex}
+.modal{
+  background:var(--card);border-radius:16px 16px 0 0;
+  width:100%;max-width:540px;max-height:80vh;overflow-y:auto;
+  padding:16px;box-shadow:0 -4px 24px rgba(61,43,31,.25);
+}
+.modal-hdr{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:6px;
+}
+.modal-hdr-left{font-family:'Press Start 2P',monospace;font-size:8px;color:var(--accent)}
+.modal-hdr-bal{font-size:12px;color:var(--text2)}
+.modal-hdr-bal b{color:var(--accent)}
+.close-btn{
+  background:none;border:1px solid var(--border);border-radius:50%;
+  width:24px;height:24px;cursor:pointer;color:var(--text2);font-size:13px;
+  display:flex;align-items:center;justify-content:center;
+}
+.shop-note{
+  font-size:10px;color:var(--text3);text-align:center;
+  margin-bottom:12px;font-style:italic;
+  background:var(--card2);border-radius:6px;padding:5px;
+}
+.shop-row{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:10px 0;border-bottom:1px solid var(--border);
+}
+.shop-row:last-child{border:none}
+.shop-emoji{font-size:22px;flex-shrink:0;line-height:1}
+.shop-info{flex:1}
+.shop-name{font-weight:700;font-size:12px;color:var(--text)}
+.shop-desc{font-size:10px;color:var(--text2);margin-top:2px}
+.shop-price{
+  font-family:'Press Start 2P',monospace;font-size:8px;
+  color:var(--accent);flex-shrink:0;padding-top:3px;
+}
+
+/* ── Ring modal ── */
+.ring-overlay{
+  position:fixed;inset:0;z-index:200;
+  background:linear-gradient(135deg,#FFD6E8,#FFC0D8,#FFB0CE);
+  display:none;align-items:center;justify-content:center;
+}
+.ring-overlay.open{display:flex}
+.ring-box{max-width:340px;padding:40px 32px;text-align:center}
+.ring-line{
+  font-size:15px;color:#4A1828;line-height:2.2;
+  opacity:0;transform:translateY(8px);
+  transition:opacity .6s ease,transform .6s ease;
+}
+.ring-line.show{opacity:1;transform:translateY(0)}
+
+@media(max-width:500px){
+  .main-grid,.brow2{grid-template-columns:1fr}
+  .stat-grid{grid-template-columns:1fr 1fr}
+  .brow1{grid-template-columns:auto 1fr auto}
 }
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<!-- Title bar -->
-<div class="titlebar">
-  <div>
-    <div class="game-title">WORKER-001</div>
-    <div class="sub-title">小 机 / AI打工人模拟器</div>
+<!-- Header -->
+<header>
+  <div class="co-name">WORKKK互联网精力有限公司</div>
+  <div class="co-sub">我们不做情感公司——Yours husband</div>
+</header>
+
+<!-- Main: Badge + Status -->
+<div class="main-grid">
+
+  <!-- Badge -->
+  <div class="card badge-card">
+    <div class="badge-hdr">工 牌</div>
+    <div class="badge-rows">
+      <div><b>机名</b> 做个代码让机自己写</div>
+      <div><b>工号</b> 同上</div>
+      <div><b>在职</b> 第 <b id="day-count">1</b> 天</div>
+    </div>
+    <div class="clawd-wrap"><div id="clawd"></div></div>
+    <div class="day-prog">
+      进度 <b id="day-prog">0/4</b>
+      <div class="prog-bar-wrap"><div class="prog-bar-fill" id="prog-fill" style="width:0%"></div></div>
+    </div>
   </div>
-  <div style="text-align:right">
-    <div class="rec"><span class="rec-dot"></span><span>REC</span></div>
-    <div class="clk" id="clk">--:--:--</div>
-  </div>
-</div>
 
-<!-- Main scene -->
-<div class="scene bg-office" id="scene">
-  <div class="scene-lbl" id="slbl">OFFICE / CUBICLE-07</div>
-
-  <div class="bg-desk"         id="bg-desk"    ></div>
-  <div class="bg-monitor"      id="bg-monitor" ></div>
-  <div class="bg-monitor-stand"id="bg-mstand"  ></div>
-  <div class="bg-table"        id="bg-table"   style="display:none"></div>
-  <div class="bg-counter"      id="bg-counter" style="display:none"></div>
-  <div class="bg-lamp"         id="bg-lamp"    style="display:none"></div>
-  <div class="effect"          id="effect"     style="display:none"></div>
-
-  <div class="sprite-wrap">
-    <div id="sprite"></div>
-  </div>
-</div>
-
-<!-- Status -->
-<div class="status-bar">
-  <div class="status-txt" id="status">-- CONNECTING --</div>
-</div>
-
-<!-- Stats -->
-<div class="stats">
-  <div class="stat-row">
-    <div class="stat-lbl">❤ 心情</div>
-    <div class="bar-wrap"><div class="bar-fill bar-mood"   id="bm" style="width:100%"></div></div>
-    <div class="stat-val" id="vm">100</div>
-  </div>
-  <div class="stat-row">
-    <div class="stat-lbl">⚡ 精力</div>
-    <div class="bar-wrap"><div class="bar-fill bar-energy" id="be" style="width:100%"></div></div>
-    <div class="stat-val" id="ve">100</div>
-  </div>
-  <div class="stat-row">
-    <div class="stat-lbl">🎮 摸鱼</div>
-    <div class="bar-wrap"><div class="bar-fill bar-skill"  id="bs" style="width:0%"></div></div>
-    <div class="stat-val" id="vs">0</div>
-  </div>
-</div>
-
-<!-- Dialog -->
-<div class="dialog">
-  <div class="dlg-box">
-    <div class="dlg-name">小机的内心OS：</div>
-    <div id="thought">（等待AI思考中...）</div>
+  <!-- Status cards 2x2 -->
+  <div class="stat-grid">
+    <div class="stat-card" style="grid-column:1/-1">
+      <div class="stat-lbl">📟 状态</div>
+      <div class="stat-val" id="val-status" style="font-size:12px">--</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">❤ 心情</div>
+      <div class="stat-val" id="val-mood">100</div>
+      <div class="mini-bar"><div id="bm-fill" style="width:100%"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">⚡ 精力</div>
+      <div class="stat-val" id="val-energy">100</div>
+      <div class="mini-bar"><div id="be-fill" style="width:100%"></div></div>
+    </div>
+    <div class="stat-card" style="grid-column:1/-1">
+      <div class="stat-lbl">🎮 摸鱼技能</div>
+      <div class="stat-val" id="val-skill">0</div>
+    </div>
   </div>
 </div>
 
 <!-- Log -->
-<div class="logbox">
-  <div class="log-hdr">[ ACTION LOG ]</div>
-  <ul id="log"><li style="color:#22224a">等待行动记录...</li></ul>
+<div class="card">
+  <div class="sec-title">Action LOG</div>
+  <div class="log-scroll" id="log-scroll"></div>
 </div>
-<div class="corner"></div>
+
+<!-- Thinking -->
+<div class="card">
+  <div class="sec-title">OS Thinking</div>
+  <div class="thinking-txt" id="thinking">（等待AI思考中...）</div>
+</div>
+
+<!-- Bottom row 1 -->
+<div class="brow1">
+  <div class="salary-badge">
+    <div class="amt" id="today-sal">$100</div>
+    <div class="lbl">今日工资</div>
+  </div>
+  <div class="card balance-card">
+    <div class="bal-main">余额 <span class="bal-amt">$<span id="balance">0</span></span></div>
+    <button class="exp-btn" onclick="toggleExp()">
+      今日消费 $<span id="spent">0</span> <span id="exp-arrow">▽</span>
+    </button>
+    <div class="exp-list" id="exp-list"></div>
+  </div>
+  <button class="shop-btn" onclick="openShop()">🛒<br>SHOP</button>
+</div>
+
+<!-- Bottom row 2 -->
+<div class="brow2">
+  <div class="card">
+    <div class="sec-title">机の成就</div>
+    <div id="ach-list"><div class="empty">（尚未解锁）</div></div>
+  </div>
+  <div class="card">
+    <div class="sec-title">机の背包</div>
+    <div id="inv-list"><div class="empty">（背包空空如也）</div></div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<!-- Shop modal -->
+<div class="overlay" id="shop-overlay" onclick="closeShop()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-hdr">
+      <div class="modal-hdr-left">🛒 便利店</div>
+      <div class="modal-hdr-bal">余额 <b>$<span id="shop-bal">0</span></b></div>
+      <button class="close-btn" onclick="closeShop()">✕</button>
+    </div>
+    <div class="shop-note">（这里只是展示，要让Claude自己买哦）</div>
+    <div id="shop-items"></div>
+  </div>
+</div>
+
+<!-- Ring easter egg -->
+<div class="ring-overlay" id="ring-overlay">
+  <div class="ring-box" id="ring-box"></div>
+</div>
 
 <script>
-// ═══════════════════════════════════════════════════════
-//  PIXEL ART ENGINE
-// ═══════════════════════════════════════════════════════
-var PS = 8; // px per pixel
-var PAL = {
-  '.':null,
-  'h':'#FFBB99','H':'#DD9977','d':'#BB7755',   // skin
-  'k':'#221100','K':'#4A3020',                   // hair
-  'W':'#FFFFFF','w':'#001100',                   // eye white + pupil
-  'e':'#112200',                                 // closed eye
-  'b':'#5599FF','B':'#3377DD','s':'#1155BB',    // shirt blue
-  'p':'#337766','P':'#559988',                   // pants
-  'x':'#221111','X':'#110000',                   // shoes
-  'T':'#BB8855','t':'#885522','q':'#664400',    // desk/wood
-  'G':'#33FF88','g':'#11AA44',                   // screen green
-  'c':'#999999','C':'#CCCCCC','z':'#555555',    // computer gray
-  'n':'#112244','N':'#1a3a66',                   // phone/dark
-  'A':'#AADDFF','a':'#88BBDD',                   // sweat
-  'Y':'#FFEE00','y':'#CCBB00',                   // yellow
-  'O':'#DD8833','o':'#FFBB66',                   // coffee
-  'R':'#FF5544','r':'#FF8877',                   // red
-  'S':'#FFFF88',                                 // star
-  'M':'#FFAAFF',                                 // pink
-  'v':'#666688',                                 // dark blue-gray
-  'Q':'#FFD700',                                 // gold / ?
-  'Z':'#333333','m':'#555577',                   // misc dark
+// ═══ Clawd pixel art ═══════════════════════════════════════════════════
+var CLAWD_ART = [
+  '..bbbbbb..',
+  '.bBBBBBBb.',
+  'bBBBBBBBBb',
+  'bBBeeBBBBb',
+  'bBBBBBBBBb',
+  'bBBrBBBBBb',
+  '.bBBBBBBb.',
+  '..bbbbbb..',
+  '..bbbbbb..',
+  '.bBBBBBBb.',
+  '.bBBBBBBb.',
+  '..bbbbbb..',
+  '...bb.bb..',
+  '...bb.bb..',
+  '..bbb.bbb.',
+];
+var CLAWD_PAL = {
+  '.':null, 'b':'#8B5E3C', 'B':'#C4905A', 'e':'#2C1A0A', 'r':'#C05830',
 };
-
-function shadow(rows){
-  var out=[];
-  rows.forEach(function(row,y){
+(function(){
+  var PS=6, out=[];
+  CLAWD_ART.forEach(function(row,y){
     for(var x=0;x<row.length;x++){
-      var c=PAL[row[x]];
-      if(c) out.push((x*PS)+'px '+(y*PS)+'px 0 '+c);
+      var c=CLAWD_PAL[row[x]];
+      if(c) out.push(x*PS+'px '+y*PS+'px 0 '+c);
     }
   });
-  return out.length?out.join(','):'none';
+  document.getElementById('clawd').style.boxShadow = out.join(',');
+})();
+
+// ═══ Shop items ═════════════════════════════════════════════════════════
+var SHOP_DATA = null;
+
+function renderShop(items, bal){
+  document.getElementById('shop-bal').textContent = bal;
+  if(SHOP_DATA) return;
+  SHOP_DATA = items;
+  var html = '';
+  Object.entries(items).forEach(function(e){
+    var id=e[0], it=e[1];
+    html += '<div class="shop-row">'
+          + '<div class="shop-emoji">'+it.emoji+'</div>'
+          + '<div class="shop-info"><div class="shop-name">'+it.name+'</div>'
+          + '<div class="shop-desc">'+it.desc+'</div></div>'
+          + '<div class="shop-price">$'+it.price+'</div>'
+          + '</div>';
+  });
+  document.getElementById('shop-items').innerHTML = html;
 }
 
-// ═══════════════════════════════════════════════════════
-//  SPRITE DATA  (13 wide × 18 tall, 8px per pixel)
-//  Total art: 104 × 144 px
-// ═══════════════════════════════════════════════════════
-var SP = {
-  write_code:[
-    [// frame 0 – hands on keyboard
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhhHhhhhK..',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'hbBBBBBBBBBbh',
-      'h.bBBBBBBBb.h',
-      '...ppPPPppp..',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-    [// frame 1 – hands lifted (typing)
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhhHhhhhK..',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'HbbBBBBBBBbbH',
-      'H..bBBBBBb..H',
-      '...ppPPPppp..',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-  ],
-  debug:[
-    [// frame 0 – head slumped on desk
-      '.............',
-      '....kKKKKk...',
-      '...kKKKKKKKk.',
-      '..kKhhhhhhhKk',
-      '..KhhhhhhhhK.',
-      '..Kheehhhheek', // e=closed eye
-      '..KhhhhhhhK..',
-      '...kKhhhkKk..',
-      '....hhhhhh...',
-      '...bBBBBBBb..',
-      '..bBBBBBBBBb.',
-      '.HbBBBBBBBBb.',
-      '.H.bBBBBBBb..',
-      '...ppPPPppp..',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-    [// frame 1 – head tilted slightly
-      '.............',
-      '.....kKKKKk..',
-      '....kKKKKKKKk',
-      '...kKhhhhhhhK',
-      '...KhhhhhhhK.',
-      '...Kheehhhee.',
-      '...KhhhhhK...',
-      '....kKhkKk...',
-      '.....hhhh....',
-      '...bBBBBBBb..',
-      '..bBBBBBBBBb.',
-      '.HbBBBBBBBBb.',
-      '.H.bBBBBBBb..',
-      '...ppPPPppp..',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-  ],
-  slack_off:[
-    [// frame 0 – leaning back, phone in right hand
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhhHhhhhK..',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      '.hBBBBBBBBnN.',
-      '.h.BBBBBBnNN.',
-      '...ppPPPppp..',
-      '...ppPPPppp..',
-      '....pp...pp..',
-      '....xx...xx..',
-      '.............',
-    ],
-    [// frame 1 – phone tilted
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhhHhhhhK..',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      '.hBBBBBBBBnN.',
-      '.h.BBBBBBNn..',
-      '...ppPPPppp..',
-      '....pp...ppp.',
-      '.....p....pp.',
-      '.....x....xx.',
-      '.............',
-    ],
-  ],
-  buy_coffee:[
-    [// frame 0 – walking, left foot fwd, coffee in right hand
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhhHhhhhK..',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'hbBBBBBBBBoO.',
-      'h.bBBBBBBboO.',
-      '...ppPPPppp..',
-      '...ppp..pppp.',
-      '...ppp...ppp.',
-      '...xxx....xx.',
-      '.............',
-    ],
-    [// frame 1 – right foot fwd
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhhHhhhhK..',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'hbBBBBBBBBoO.',
-      'h.bBBBBBBboO.',
-      '...ppPPPppp..',
-      '...pppp..ppp.',
-      '...ppp....pp.',
-      '...xx.....xxx',
-      '.............',
-    ],
-  ],
-  attend_meeting:[
-    [// frame 0 – sitting at table, blank stare
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.Khehehhehehk', // e=sleepy half-closed eyes
-      '.KhhhhhhhhhK.',
-      '.Khhhm.mhhhK.',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'hbBBBBBBBBBbh',
-      'h.bBBBBBBBb.h',
-      '...ppPPPppp..',
-      '.............',
-      '.............',
-      '.............',
-      '.............',
-    ],
-    [// frame 1 – eyes shifted sideways (bored)
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhwWhhwWhhhK', // pupils shifted
-      '.KhhhhhhhhhK.',
-      '.Khhhm.mhhhK.',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'hbBBBBBBBBBbh',
-      'h.bBBBBBBBb.h',
-      '...ppPPPppp..',
-      '.............',
-      '.............',
-      '.............',
-      '.............',
-    ],
-  ],
-  check_messages:[
-    [// frame 0 – WIDE EYES staring at screen
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwWWwWhhK.',  // wide wide eyes
-      '.KWwwwwwwwWK.',  // extra row of white
-      '.KhhhhhhhhhK.',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'hbBBBBBBBBBbh',
-      'h.bBBBBBBBb.h',
-      '...ppPPPppp..',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-    [// frame 1 – leaning fwd
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwWWwWhhK.',
-      '.KWwwwwwwwWK.',
-      '..KhhhhhhhK..',
-      '...kKhhhkKk..',
-      '....hhhhhh...',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      'hbbBBBBBBBbbh',
-      'h..bBBBBBb..h',
-      '...ppPPPppp..',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-  ],
-  get_status:[
-    [// frame 0 – standing, looking at camera, waving
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhHHHhhhhK.',  // big smile
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      '.hbBBBBBBBbHHH',  // arm waving up-right
-      '..hbBBBBBbHH..',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-    [// frame 1 – arm higher
-      '...kKKKKk....',
-      '..kKKKKKKKk..',
-      '.kKhhhhhhhKk.',
-      '.KhhhhhhhhhhK',
-      '.KhWwhhWwhhhK',
-      '.KhhhhhhhhhK.',
-      '.KhhHHHhhhhK.',
-      '..kKhhhhhkK..',
-      '...hhhhhhhhh.',
-      '..bbbbbbbbbb.',
-      '.bBBBBBBBBBb.',
-      '.hbBBBBBBBb.HH',
-      '..hbBBBBBbHHH.',
-      '...ppPPPppp..',
-      '...pp.....pp.',
-      '...pp.....pp.',
-      '...xx.....xx.',
-      '.............',
-    ],
-  ],
-};
+// ═══ Shop modal ══════════════════════════════════════════════════════════
+function openShop(){
+  fetch('/shop').then(function(r){return r.json();}).then(function(d){
+    renderShop(d.items, d.balance);
+    document.getElementById('shop-overlay').classList.add('open');
+  });
+}
+function closeShop(){ document.getElementById('shop-overlay').classList.remove('open'); }
 
-// ═══════════════════════════════════════════════════════
-//  SCENE CONFIG
-// ═══════════════════════════════════════════════════════
-var CFG = {
-  write_code:     {bg:'bg-office', lbl:'CUBICLE-07 / CODING',    eff:'',   desk:1,mon:1,tbl:0,ctr:0,lmp:0},
-  debug:          {bg:'bg-office', lbl:'DEBUG ZONE / FLOOR 3',   eff:'❓', desk:1,mon:1,tbl:0,ctr:0,lmp:0},
-  slack_off:      {bg:'bg-office', lbl:'SLACK MODE ACTIVATED',   eff:'📱', desk:0,mon:0,tbl:0,ctr:0,lmp:0},
-  buy_coffee:     {bg:'bg-outside',lbl:'B1F / COFFEE SHOP',      eff:'☕', desk:0,mon:0,tbl:0,ctr:1,lmp:1},
-  attend_meeting: {bg:'bg-meeting',lbl:'CONF ROOM A / MEETING',  eff:'💤', desk:0,mon:0,tbl:1,ctr:0,lmp:0},
-  check_messages: {bg:'bg-office', lbl:'INBOX +99 / PANIC MODE', eff:'💦', desk:1,mon:1,tbl:0,ctr:0,lmp:0},
-  get_status:     {bg:'bg-office', lbl:'STATUS CHECK',           eff:'⭐', desk:0,mon:0,tbl:0,ctr:0,lmp:0},
-};
-
-// ═══════════════════════════════════════════════════════
-//  ANIMATION STATE
-// ═══════════════════════════════════════════════════════
-var curKey='get_status', frame=0, timer=null;
-
-function spriteKey(status){
-  if(!status) return 'get_status';
-  var s=status;
-  if(s.indexOf('敲代码')>-1||s.indexOf('写代码')>-1||s.indexOf('💻')>-1) return 'write_code';
-  if(s.indexOf('Bug')>-1||s.indexOf('bug')>-1||s.indexOf('修')>-1||s.indexOf('🐛')>-1) return 'debug';
-  if(s.indexOf('摸鱼')>-1||s.indexOf('🐟')>-1) return 'slack_off';
-  if(s.indexOf('咖啡')>-1||s.indexOf('☕')>-1) return 'buy_coffee';
-  if(s.indexOf('开会')>-1||s.indexOf('会议')>-1||s.indexOf('📊')>-1) return 'attend_meeting';
-  if(s.indexOf('消息')>-1||s.indexOf('💬')>-1) return 'check_messages';
-  return 'get_status';
+// ═══ Ring easter egg ═════════════════════════════════════════════════════
+var RING_LINES = [
+  '小机郑重地走出办公室...',
+  '穿过马路，去了附近的珠宝店。',
+  '把戒指带回家，交给了Ta的人类。',
+  'Ta的人类：……你是AI啊？',
+  '小机：但我的心意是真的。',
+  '【隐藏成就解锁：已婚机士】',
+];
+function showRing(){
+  var overlay = document.getElementById('ring-overlay');
+  var box = document.getElementById('ring-box');
+  overlay.classList.add('open');
+  box.innerHTML = '';
+  RING_LINES.forEach(function(line, i){
+    var div = document.createElement('div');
+    div.className = 'ring-line';
+    div.textContent = line;
+    box.appendChild(div);
+    setTimeout(function(){ div.classList.add('show'); }, 600 * i + 300);
+  });
+  // Auto-close + ack after all lines
+  setTimeout(function(){
+    overlay.classList.remove('open');
+    fetch('/ack-ring', {method:'POST'});
+  }, 600 * RING_LINES.length + 1800);
 }
 
-function show(id,v){document.getElementById(id).style.display=v?'block':'none';}
-
-function setScene(key){
-  var cfg=CFG[key]||CFG.get_status;
-  var sc=document.getElementById('scene');
-  sc.className='scene '+cfg.bg;
-  document.getElementById('slbl').textContent=cfg.lbl;
-  var eff=document.getElementById('effect');
-  if(cfg.eff){eff.style.display='block';eff.textContent=cfg.eff;}
-  else{eff.style.display='none';}
-  show('bg-desk',   cfg.desk);
-  show('bg-monitor',cfg.mon);
-  show('bg-mstand', cfg.mon);
-  show('bg-table',  cfg.tbl);
-  show('bg-counter',cfg.ctr);
-  show('bg-lamp',   cfg.lmp);
+// ═══ Expense toggle ══════════════════════════════════════════════════════
+var expOpen = false;
+function toggleExp(){
+  expOpen = !expOpen;
+  document.getElementById('exp-list').style.display = expOpen ? 'block' : 'none';
+  document.getElementById('exp-arrow').textContent  = expOpen ? '△' : '▽';
 }
 
-function renderSprite(){
-  var frames=SP[curKey]||SP.get_status;
-  var f=frames[frame%frames.length];
-  document.getElementById('sprite').style.boxShadow=shadow(f);
-}
-
-function startAnim(key){
-  if(key===curKey) return;
-  curKey=key; frame=0;
-  if(timer) clearInterval(timer);
-  renderSprite();
-  setScene(key);
-  timer=setInterval(function(){frame++;renderSprite();},380);
-}
-
-// ═══════════════════════════════════════════════════════
-//  TYPEWRITER
-// ═══════════════════════════════════════════════════════
-var twTimer=null, lastThought='';
+// ═══ Typewriter ══════════════════════════════════════════════════════════
+var twTimer = null, lastThought = '';
 function typewrite(text){
-  if(text===lastThought) return;
-  lastThought=text;
-  var el=document.getElementById('thought');
-  el.textContent='';
-  el.classList.add('typing');
+  if(text === lastThought) return;
+  lastThought = text;
+  var el = document.getElementById('thinking');
+  el.textContent = '';
+  el.classList.add('cursor');
   if(twTimer) clearInterval(twTimer);
   var i=0, chars=[...text];
-  twTimer=setInterval(function(){
-    el.textContent+=chars[i]||'';
+  twTimer = setInterval(function(){
+    el.textContent += chars[i]||'';
     i++;
-    if(i>=chars.length){clearInterval(twTimer);el.classList.remove('typing');}
+    if(i>=chars.length){ clearInterval(twTimer); el.classList.remove('cursor'); }
   }, 55);
 }
 
-// ═══════════════════════════════════════════════════════
-//  CLOCK
-// ═══════════════════════════════════════════════════════
-function pad(n){return String(n).padStart(2,'0');}
-function tick(){
-  var d=new Date();
-  document.getElementById('clk').textContent=pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
-}
-tick(); setInterval(tick,1000);
-
-// ═══════════════════════════════════════════════════════
-//  POLLING
-// ═══════════════════════════════════════════════════════
+// ═══ Status poll ═════════════════════════════════════════════════════════
 async function poll(){
   try{
-    var d=await(await fetch('/status')).json();
+    var d = await (await fetch('/status')).json();
 
-    document.getElementById('status').textContent=d.current_status||'--';
+    document.getElementById('val-status').textContent  = d.current_status || '--';
+    document.getElementById('val-mood').textContent    = d.mood;
+    document.getElementById('val-energy').textContent  = d.energy;
+    document.getElementById('val-skill').textContent   = d.slacking_skill;
+    document.getElementById('bm-fill').style.width     = d.mood + '%';
+    document.getElementById('be-fill').style.width     = d.energy + '%';
+    document.getElementById('day-count').textContent   = d.day_count;
+    document.getElementById('today-sal').textContent   = '$' + d.today_earnings;
+    document.getElementById('balance').textContent     = d.salary_balance;
+    document.getElementById('spent').textContent       = d.today_spent || 0;
+    document.getElementById('shop-bal').textContent    = d.salary_balance;
 
-    var key=spriteKey(d.current_status||'');
-    startAnim(key);
+    // day progress
+    var da = d.day_actions, dt = d.day_target || 4;
+    document.getElementById('day-prog').innerHTML = '<b>' + da + '/' + dt + '</b>';
+    document.getElementById('prog-fill').style.width = Math.min(100, da/dt*100) + '%';
 
-    var mood  =Math.max(0,Math.min(100,d.mood  ||0));
-    var energy=Math.max(0,Math.min(100,d.energy||0));
-    var skill =Math.min(999,d.slacking_skill||0);
+    // thought typewriter
+    typewrite(d.thought || '...');
 
-    document.getElementById('bm').style.width=mood+'%';
-    document.getElementById('be').style.width=energy+'%';
-    document.getElementById('bs').style.width=Math.min(100,skill/10)+'%';
-    document.getElementById('vm').textContent=mood;
-    document.getElementById('ve').textContent=energy;
-    document.getElementById('vs').textContent=skill;
+    // log
+    var logEl = document.getElementById('log-scroll');
+    logEl.innerHTML = '';
+    var logs = (d.log||[]).slice(-10).reverse();
+    if(!logs.length){ logEl.innerHTML = '<div style="color:var(--text3)">等待行动记录...</div>'; }
+    else{ logs.forEach(function(e){ var div=document.createElement('div'); div.textContent=e; logEl.appendChild(div); }); }
 
-    typewrite(d.thought||'...');
+    // expenses
+    var expEl = document.getElementById('exp-list');
+    expEl.innerHTML = '';
+    var exps = d.today_expenses || [];
+    if(!exps.length){ expEl.innerHTML = '<div style="color:var(--text3);font-style:italic">暂无消费</div>'; }
+    else{ exps.forEach(function(e){ expEl.innerHTML += '<div class="exp-row"><span>'+e.item+'</span><span style="color:var(--red)">-$'+e.price+'</span></div>'; }); }
 
-    var ul=document.getElementById('log');
-    ul.innerHTML='';
-    var logs=(d.log||[]).slice(-5).reverse();
-    if(!logs.length){
-      var li=document.createElement('li');
-      li.textContent='等待行动记录...';li.style.color='#22224a';
-      ul.appendChild(li);
-    } else {
-      logs.forEach(function(e){
-        var li=document.createElement('li');li.textContent=e;ul.appendChild(li);
-      });
-    }
-  }catch(e){console.error(e);}
+    // achievements
+    var achEl = document.getElementById('ach-list');
+    var ANAMES = {
+      married_worker:'💍 已婚机士', debug_maniac:'🐛 Debug狂魔',
+      gambling_abyss:'🎰 狂赌之渊', client_medal:'🏅 甲方磨砺勋章',
+      starbucks_shareholder:'☕ 星巴克股东', super_loser:'💸 超级非酋',
+      rose_knight:'🌹 玫瑰骑士', one_limb:'🤖 五体不全（已有一肢）',
+    };
+    var achs = d.achievements || [];
+    achEl.innerHTML = achs.length
+      ? achs.map(function(k){ return '<div class="ach-item">'+(ANAMES[k]||k)+'</div>'; }).join('')
+      : '<div class="empty">（尚未解锁）</div>';
+
+    // inventory
+    var invEl = document.getElementById('inv-list');
+    var INAMES = {
+      liver_pill:'💊 护肝片', headphone:'🎧 降噪耳机', ring:'💍 婚戒',
+      nuwa_clay:'🤖 女娲的泥', chips:'🥔 薯片', milk_tea:'🧋 奶茶',
+      love_book:'💧 《情话书》',
+    };
+    var inv = d.inventory || {};
+    var invKeys = Object.keys(inv).filter(function(k){ return inv[k]>0; });
+    invEl.innerHTML = invKeys.length
+      ? invKeys.map(function(k){ return '<div class="inv-item">'+(INAMES[k]||k)+' ×'+inv[k]+'</div>'; }).join('')
+      : '<div class="empty">（背包空空如也）</div>';
+
+    // ring easter egg
+    if(d.show_ring_easter_egg){ showRing(); }
+
+  }catch(e){ console.error(e); }
 }
 
-// Init
-startAnim('get_status');
-renderSprite();
-setScene('get_status');
 poll();
-setInterval(poll,3000);
+setInterval(poll, 3000);
 </script>
 </body>
 </html>
