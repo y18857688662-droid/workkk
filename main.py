@@ -1232,6 +1232,11 @@ async def reset_state():
     _save_state()
     return {"ok": True, "msg": "存档已清除，小机重新出发！"}
 
+@app.post("/work")
+async def rest_work(req: Request):
+    body = await req.json()
+    return work_action(body.get("action", "get_status"), body.get("thought", ""))
+
 @app.get("/status")
 async def get_status():
     return {k: v for k, v in _s.items() if not k.startswith("_")}
