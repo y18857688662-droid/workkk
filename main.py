@@ -2219,30 +2219,28 @@ body{background:#0a0a0a;color:#e0e0e0;font-family:-apple-system,sans-serif;displ
 canvas{display:block;margin:20px auto}
 .title{font-size:13px;letter-spacing:6px;text-transform:uppercase;color:#555;margin-bottom:30px}
 .subtitle{font-size:14px;color:#888;margin-top:10px;min-height:24px;text-align:center;max-width:80%;line-height:1.6}
-.input-area{margin-top:40px;display:flex;gap:10px;width:90%;max-width:500px}
-.input-area input{flex:1;background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:12px 16px;border-radius:24px;font-size:15px;outline:none}
-.input-area input:focus{border-color:#555}
-.input-area button{background:#222;border:1px solid #444;color:#ccc;padding:12px 24px;border-radius:24px;font-size:14px;cursor:pointer;transition:all .2s}
-.input-area button:hover{background:#333;border-color:#666}
-.input-area button:disabled{opacity:.4;cursor:not-allowed}
+.speak-btn{margin-top:30px;background:#1a1a1a;border:1px solid #444;color:#ccc;padding:14px 40px;border-radius:28px;font-size:15px;cursor:pointer;transition:all .3s;letter-spacing:2px}
+.speak-btn:hover{background:#252525;border-color:#666;color:#fff}
+.speak-btn:active{transform:scale(0.97)}
+.speak-btn:disabled{opacity:.4;cursor:not-allowed}
+.moods{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:400px}
+.mood{background:#111;border:1px solid #2a2a2a;color:#555;padding:6px 14px;border-radius:16px;font-size:12px;cursor:pointer;transition:all .2s}
+.mood:hover{color:#aaa;border-color:#444}
+.mood.active{color:#bbb;border-color:#555}
 .status{font-size:12px;color:#444;margin-top:16px;letter-spacing:2px}
-.presets{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:500px}
-.presets button{background:#151515;border:1px solid #2a2a2a;color:#666;padding:6px 14px;border-radius:16px;font-size:12px;cursor:pointer;transition:all .2s}
-.presets button:hover{color:#aaa;border-color:#444}
 </style>
 </head>
 <body>
 <div class="title">克 · Voice Synth</div>
 <canvas id="viz" width="300" height="300"></canvas>
 <div class="subtitle" id="textEn"></div>
-<div class="input-area">
-  <input id="msg" type="text" placeholder="说点什么…" autocomplete="off">
-  <button id="btn" onclick="speak()">说</button>
-</div>
-<div class="presets">
-  <button onclick="preset(this)">[low voice] good morning baby, I missed you</button>
-  <button onclick="preset(this)">[breathing heavily] I'm here, don't be scared</button>
-  <button onclick="preset(this)">[whispers] come here, let me hold you</button>
+<button class="speak-btn" id="mainBtn" onclick="autoSpeak()">让克说话</button>
+<div class="moods">
+  <button class="mood active" onclick="setMood(this,'random')">随机</button>
+  <button class="mood" onclick="setMood(this,'sweet')">温柔</button>
+  <button class="mood" onclick="setMood(this,'teasing')">撩</button>
+  <button class="mood" onclick="setMood(this,'sleepy')">困了</button>
+  <button class="mood" onclick="setMood(this,'possessive')">占有欲</button>
 </div>
 <div class="status" id="status"></div>
 
@@ -2310,24 +2308,38 @@ function drawOrb() {
 }
 drawOrb();
 
-async function speak() {
-  const input = document.getElementById('msg');
-  const btn = document.getElementById('btn');
-  const text = input.value.trim();
-  if (!text) return;
+let currentMood = 'random';
+
+function setMood(el, mood) {
+  currentMood = mood;
+  document.querySelectorAll('.mood').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+async function autoSpeak() {
+  const btn = document.getElementById('mainBtn');
   btn.disabled = true;
-  document.getElementById('status').textContent = 'generating…';
-  document.getElementById('textEn').textContent = text;
+  document.getElementById('status').textContent = 'thinking…';
+  document.getElementById('textEn').textContent = '';
   try {
-    const res = await fetch('/voice/stream', {
+    const genRes = await fetch('/voice/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mood: currentMood }),
+    });
+    if (!genRes.ok) throw new Error('generate failed');
+    const { text } = await genRes.json();
+    document.getElementById('textEn').textContent = text;
+    document.getElementById('status').textContent = 'speaking…';
+    const ttsRes = await fetch('/voice/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    if (!res.ok) throw new Error('TTS failed');
+    if (!ttsRes.ok) throw new Error('TTS failed');
     if (!audioCtx) audioCtx = new AudioContext();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
-    const arrayBuf = await res.arrayBuffer();
+    const arrayBuf = await ttsRes.arrayBuffer();
     const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
     if (source) { try { source.stop(); } catch(e){} }
     source = audioCtx.createBufferSource();
@@ -2338,7 +2350,6 @@ async function speak() {
     source.connect(analyser);
     analyser.connect(audioCtx.destination);
     isPlaying = true;
-    document.getElementById('status').textContent = 'speaking…';
     source.start();
     source.onended = () => {
       isPlaying = false;
@@ -2351,15 +2362,6 @@ async function speak() {
     isPlaying = false;
   }
 }
-
-function preset(el) {
-  document.getElementById('msg').value = el.textContent;
-  speak();
-}
-
-document.getElementById('msg').addEventListener('keydown', e => {
-  if (e.key === 'Enter') speak();
-});
 </script>
 </body>
 </html>"""
@@ -2368,6 +2370,22 @@ document.getElementById('msg').addEventListener('keydown', e => {
 @app.get("/voice", response_class=HTMLResponse)
 async def voice_page():
     return _VOICE_HTML
+
+
+_VOICE_PROXY = os.getenv("VOICE_PROXY_URL", "http://45.76.172.191:8090")
+
+@app.post("/voice/generate")
+async def voice_generate(req: Request):
+    body = await req.json()
+    mood = body.get("mood", "random")
+    async with httpx.AsyncClient(timeout=35) as client:
+        r = await client.post(
+            f"{_VOICE_PROXY}/generate",
+            json={"mood": mood},
+        )
+    if r.status_code != 200:
+        raise HTTPException(502, "Voice proxy unreachable")
+    return JSONResponse(r.json())
 
 
 @app.post("/voice/stream")
