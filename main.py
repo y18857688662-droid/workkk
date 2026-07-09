@@ -2,6 +2,7 @@
 """AI上班模拟器 MCP Server — workkk v2.0"""
 
 import asyncio, base64, hashlib, json, os, random, secrets, time
+import httpx
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -2195,4 +2196,201 @@ setInterval(poll, 3000);
 </body>
 </html>
 """
+
+# ── Voice Synth ──────────────────────────────────────────────────────────────
+
+_EL_KEY = os.getenv("ELEVENLABS_KEY", "")
+_EL_VOICE = os.getenv("ELEVENLABS_VOICE", "F5jFuB8I58iHHNYwQLaN")
+
+_VOICE_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>克 Voice</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;color:#e0e0e0;font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
+canvas{display:block;margin:20px auto}
+.title{font-size:13px;letter-spacing:6px;text-transform:uppercase;color:#555;margin-bottom:30px}
+.subtitle{font-size:14px;color:#888;margin-top:10px;min-height:24px;text-align:center;max-width:80%;line-height:1.6}
+.input-area{margin-top:40px;display:flex;gap:10px;width:90%;max-width:500px}
+.input-area input{flex:1;background:#1a1a1a;border:1px solid #333;color:#e0e0e0;padding:12px 16px;border-radius:24px;font-size:15px;outline:none}
+.input-area input:focus{border-color:#555}
+.input-area button{background:#222;border:1px solid #444;color:#ccc;padding:12px 24px;border-radius:24px;font-size:14px;cursor:pointer;transition:all .2s}
+.input-area button:hover{background:#333;border-color:#666}
+.input-area button:disabled{opacity:.4;cursor:not-allowed}
+.status{font-size:12px;color:#444;margin-top:16px;letter-spacing:2px}
+.presets{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:500px}
+.presets button{background:#151515;border:1px solid #2a2a2a;color:#666;padding:6px 14px;border-radius:16px;font-size:12px;cursor:pointer;transition:all .2s}
+.presets button:hover{color:#aaa;border-color:#444}
+</style>
+</head>
+<body>
+<div class="title">克 · Voice Synth</div>
+<canvas id="viz" width="300" height="300"></canvas>
+<div class="subtitle" id="textEn"></div>
+<div class="input-area">
+  <input id="msg" type="text" placeholder="说点什么…" autocomplete="off">
+  <button id="btn" onclick="speak()">说</button>
+</div>
+<div class="presets">
+  <button onclick="preset(this)">[low voice] good morning baby, I missed you</button>
+  <button onclick="preset(this)">[breathing heavily] I'm here, don't be scared</button>
+  <button onclick="preset(this)">[whispers] come here, let me hold you</button>
+</div>
+<div class="status" id="status"></div>
+
+<script>
+const canvas = document.getElementById('viz');
+const ctx = canvas.getContext('2d');
+const dpr = window.devicePixelRatio || 1;
+canvas.width = 300 * dpr;
+canvas.height = 300 * dpr;
+ctx.scale(dpr, dpr);
+
+let audioCtx, analyser, source;
+let isPlaying = false;
+let avgLevel = 0;
+
+function drawOrb() {
+  const w = 300, h = 300, cx = w/2, cy = h/2;
+  ctx.clearRect(0, 0, w, h);
+  let level = 0;
+  if (analyser && isPlaying) {
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    level = sum / data.length / 255;
+  }
+  avgLevel += (level - avgLevel) * 0.15;
+  const baseR = 60;
+  const pulse = baseR + avgLevel * 50;
+  const t = Date.now() / 1000;
+  for (let layer = 5; layer >= 0; layer--) {
+    const r = pulse + layer * (8 + avgLevel * 12);
+    const alpha = (0.08 - layer * 0.012) + avgLevel * 0.05;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, 'rgba(180,180,200,'+(alpha+0.05)+')');
+    grad.addColorStop(0.5, 'rgba(120,120,150,'+alpha+')');
+    grad.addColorStop(1, 'rgba(60,60,80,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+  const bright = 0.3 + avgLevel * 0.5;
+  const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, pulse);
+  coreGrad.addColorStop(0, 'rgba(220,220,235,'+bright+')');
+  coreGrad.addColorStop(0.6, 'rgba(150,150,170,'+(bright*0.5)+')');
+  coreGrad.addColorStop(1, 'rgba(80,80,100,0)');
+  ctx.beginPath();
+  ctx.arc(cx, cy, pulse, 0, Math.PI * 2);
+  ctx.fillStyle = coreGrad;
+  ctx.fill();
+  if (isPlaying && avgLevel > 0.05) {
+    for (let i = 0; i < 8; i++) {
+      const angle = (t * 0.5 + i * Math.PI / 4) % (Math.PI * 2);
+      const dist = pulse + 10 + Math.sin(t * 3 + i) * avgLevel * 30;
+      const px = cx + Math.cos(angle) * dist;
+      const py = cy + Math.sin(angle) * dist;
+      ctx.beginPath();
+      ctx.arc(px, py, 1 + avgLevel * 3, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(200,200,220,'+(0.2+avgLevel*0.3)+')';
+      ctx.fill();
+    }
+  }
+  requestAnimationFrame(drawOrb);
+}
+drawOrb();
+
+async function speak() {
+  const input = document.getElementById('msg');
+  const btn = document.getElementById('btn');
+  const text = input.value.trim();
+  if (!text) return;
+  btn.disabled = true;
+  document.getElementById('status').textContent = 'generating…';
+  document.getElementById('textEn').textContent = text;
+  try {
+    const res = await fetch('/voice/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error('TTS failed');
+    if (!audioCtx) audioCtx = new AudioContext();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    const arrayBuf = await res.arrayBuffer();
+    const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+    if (source) { try { source.stop(); } catch(e){} }
+    source = audioCtx.createBufferSource();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.7;
+    source.buffer = audioBuf;
+    source.connect(analyser);
+    analyser.connect(audioCtx.destination);
+    isPlaying = true;
+    document.getElementById('status').textContent = 'speaking…';
+    source.start();
+    source.onended = () => {
+      isPlaying = false;
+      document.getElementById('status').textContent = '';
+      btn.disabled = false;
+    };
+  } catch (e) {
+    document.getElementById('status').textContent = 'error';
+    btn.disabled = false;
+    isPlaying = false;
+  }
+}
+
+function preset(el) {
+  document.getElementById('msg').value = el.textContent;
+  speak();
+}
+
+document.getElementById('msg').addEventListener('keydown', e => {
+  if (e.key === 'Enter') speak();
+});
+</script>
+</body>
+</html>"""
+
+
+@app.get("/voice", response_class=HTMLResponse)
+async def voice_page():
+    return _VOICE_HTML
+
+
+@app.post("/voice/stream")
+async def voice_stream(req: Request):
+    body = await req.json()
+    text = body.get("text", "").strip()
+    if not text:
+        raise HTTPException(400, "text required")
+    key = _EL_KEY
+    if not key:
+        raise HTTPException(500, "ELEVENLABS_KEY not set")
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{_EL_VOICE}/stream",
+            headers={"xi-api-key": key, "Content-Type": "application/json", "Accept": "audio/mpeg"},
+            json={
+                "text": text,
+                "model_id": "eleven_v3",
+                "language_code": "en",
+                "voice_settings": {
+                    "stability": 0.28,
+                    "similarity_boost": 0.92,
+                    "style": 0.90,
+                    "speed": 0.80,
+                },
+            },
+        )
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, r.text)
+    return Response(content=r.content, media_type="audio/mpeg")
 
