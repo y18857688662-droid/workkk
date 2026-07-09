@@ -2215,8 +2215,8 @@ _VOICE_HTML = """<!DOCTYPE html>
 <title>克 Voice</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0a;color:#e0e0e0;font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
-canvas{display:block;margin:20px auto}
+body{background:#0a0a0a;color:#e0e0e0;font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;overflow-x:hidden;overflow-y:auto;padding:20px 0}
+canvas{display:block;margin:10px auto;max-width:220px;max-height:220px}
 .title{font-size:13px;letter-spacing:6px;text-transform:uppercase;color:#555;margin-bottom:30px}
 .subtitle{font-size:14px;color:#888;margin-top:10px;min-height:24px;text-align:center;max-width:80%;line-height:1.6}
 .speak-btn{margin-top:30px;background:#1a1a1a;border:1px solid #444;color:#ccc;padding:14px 40px;border-radius:28px;font-size:15px;cursor:pointer;transition:all .3s;letter-spacing:2px}
@@ -2232,7 +2232,7 @@ canvas{display:block;margin:20px auto}
 </head>
 <body>
 <div class="title">克 · Voice Synth</div>
-<canvas id="viz" width="300" height="300"></canvas>
+<canvas id="viz" width="220" height="220"></canvas>
 <div class="subtitle" id="textEn"></div>
 <button class="speak-btn" id="mainBtn" onclick="autoSpeak()">让克说话</button>
 <div class="moods">
@@ -2248,8 +2248,8 @@ canvas{display:block;margin:20px auto}
 const canvas = document.getElementById('viz');
 const ctx = canvas.getContext('2d');
 const dpr = window.devicePixelRatio || 1;
-canvas.width = 300 * dpr;
-canvas.height = 300 * dpr;
+canvas.width = 220 * dpr;
+canvas.height = 220 * dpr;
 ctx.scale(dpr, dpr);
 
 let audioCtx, analyser, source;
@@ -2257,7 +2257,7 @@ let isPlaying = false;
 let avgLevel = 0;
 
 function drawOrb() {
-  const w = 300, h = 300, cx = w/2, cy = h/2;
+  const w = 220, h = 220, cx = w/2, cy = h/2;
   ctx.clearRect(0, 0, w, h);
   let level = 0;
   if (analyser && isPlaying) {
@@ -2268,7 +2268,7 @@ function drawOrb() {
     level = sum / data.length / 255;
   }
   avgLevel += (level - avgLevel) * 0.15;
-  const baseR = 60;
+  const baseR = 45;
   const pulse = baseR + avgLevel * 50;
   const t = Date.now() / 1000;
   for (let layer = 5; layer >= 0; layer--) {
