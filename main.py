@@ -2215,24 +2215,24 @@ _VOICE_HTML = """<!DOCTYPE html>
 <title>克 Voice</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0a;color:#e0e0e0;font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;overflow-x:hidden;overflow-y:auto;padding:20px 0}
-canvas{display:block;margin:10px auto;max-width:220px;max-height:220px}
-.title{font-size:13px;letter-spacing:6px;text-transform:uppercase;color:#555;margin-bottom:30px}
-.subtitle{font-size:14px;color:#888;margin-top:10px;min-height:24px;text-align:center;max-width:80%;line-height:1.6}
-.speak-btn{margin-top:30px;background:#1a1a1a;border:1px solid #444;color:#ccc;padding:14px 40px;border-radius:28px;font-size:15px;cursor:pointer;transition:all .3s;letter-spacing:2px}
+body{background:#0a0a0a;color:#e0e0e0;font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:100dvh;padding:5vh 16px}
+canvas{display:block;margin:0 auto;width:55vw;height:55vw;max-width:280px;max-height:280px}
+.title{font-size:13px;letter-spacing:6px;text-transform:uppercase;color:#555;margin-bottom:2vh}
+.subtitle{font-size:14px;color:#888;margin-top:8px;min-height:24px;text-align:center;max-width:85%;line-height:1.6}
+.speak-btn{margin-top:5vh;background:#1a1a1a;border:1px solid #444;color:#ccc;padding:14px 40px;border-radius:28px;font-size:15px;cursor:pointer;transition:all .3s;letter-spacing:2px;-webkit-tap-highlight-color:transparent}
 .speak-btn:hover{background:#252525;border-color:#666;color:#fff}
 .speak-btn:active{transform:scale(0.97)}
 .speak-btn:disabled{opacity:.4;cursor:not-allowed}
-.moods{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:400px}
-.mood{background:#111;border:1px solid #2a2a2a;color:#555;padding:6px 14px;border-radius:16px;font-size:12px;cursor:pointer;transition:all .2s}
+.moods{margin-top:2vh;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:90%;padding:0 8px}
+.mood{background:#111;border:1px solid #2a2a2a;color:#555;padding:6px 14px;border-radius:16px;font-size:12px;cursor:pointer;transition:all .2s;-webkit-tap-highlight-color:transparent}
 .mood:hover{color:#aaa;border-color:#444}
 .mood.active{color:#bbb;border-color:#555}
-.status{font-size:12px;color:#444;margin-top:16px;letter-spacing:2px}
+.status{font-size:12px;color:#444;margin-top:2vh;letter-spacing:2px}
 </style>
 </head>
 <body>
 <div class="title">克 · Voice Synth</div>
-<canvas id="viz" width="220" height="220"></canvas>
+<canvas id="viz"></canvas>
 <div class="subtitle" id="textEn"></div>
 <button class="speak-btn" id="mainBtn" onclick="autoSpeak()">让克说话</button>
 <div class="moods">
@@ -2248,16 +2248,24 @@ canvas{display:block;margin:10px auto;max-width:220px;max-height:220px}
 const canvas = document.getElementById('viz');
 const ctx = canvas.getContext('2d');
 const dpr = window.devicePixelRatio || 1;
-canvas.width = 220 * dpr;
-canvas.height = 220 * dpr;
-ctx.scale(dpr, dpr);
+let S = Math.min(window.innerWidth * 0.55, 280);
+function sizeCanvas(){
+  S = Math.min(window.innerWidth * 0.55, 280);
+  canvas.width = S * dpr;
+  canvas.height = S * dpr;
+  canvas.style.width = S + 'px';
+  canvas.style.height = S + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+sizeCanvas();
+window.addEventListener('resize', sizeCanvas);
 
 let audioCtx, analyser, source;
 let isPlaying = false;
 let avgLevel = 0;
 
 function drawOrb() {
-  const w = 220, h = 220, cx = w/2, cy = h/2;
+  const w = S, h = S, cx = w/2, cy = h/2;
   ctx.clearRect(0, 0, w, h);
   let level = 0;
   if (analyser && isPlaying) {
@@ -2268,7 +2276,7 @@ function drawOrb() {
     level = sum / data.length / 255;
   }
   avgLevel += (level - avgLevel) * 0.15;
-  const baseR = 45;
+  const baseR = S * 0.2;
   const pulse = baseR + avgLevel * 50;
   const t = Date.now() / 1000;
   for (let layer = 5; layer >= 0; layer--) {
