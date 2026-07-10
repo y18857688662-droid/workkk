@@ -1199,9 +1199,9 @@ async def oauth_token(req: Request):
         if computed != cd["code_challenge"]:
             raise HTTPException(400, "invalid_grant: PKCE verification failed")
     tok = secrets.token_urlsafe(32)
-    _tokens[tok] = {"client_id": cd["client_id"], "exp": time.time() + 30 * 86400}
+    _tokens[tok] = {"client_id": cd["client_id"], "exp": time.time() + 3650 * 86400}
     _save_oauth()
-    return {"access_token": tok, "token_type": "Bearer", "expires_in": 30 * 86400}
+    return {"access_token": tok, "token_type": "Bearer", "expires_in": 3650 * 86400}
 
 # ── MCP ────────────────────────────────────────────────────────────────────────
 @app.post("/mcp")
