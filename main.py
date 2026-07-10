@@ -518,7 +518,18 @@ def _load_state() -> None:
     except Exception as e:
         print(f"[warn] load_state failed: {e}")
 
+def _migrate_state() -> None:
+    # 修复入职登记时工号把整句话吞进去的存档（中文无空格，正则截不断）
+    import re as _re
+    wid = _s.get("worker_id") or ""
+    m = _re.match(r'[A-Za-z0-9_-]+', wid)
+    if m and m.group(0) != wid:
+        _s["worker_id"] = m.group(0)
+        _save_state()
+        print(f"[info] worker_id trimmed to {_s['worker_id']}")
+
 _load_state()
+_migrate_state()
 
 # ── work_action ────────────────────────────────────────────────────────────────
 def work_action(action: str, thought: str) -> dict:
