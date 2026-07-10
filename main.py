@@ -22,6 +22,33 @@ _clients: dict = {}
 _codes:   dict = {}
 _tokens:  dict = {}
 
+# 授权记录持久化：服务重启/重新部署后不再掉线
+_OAUTH_FILE = "/data/oauth_state.json"
+
+def _save_oauth() -> None:
+    try:
+        os.makedirs(os.path.dirname(_OAUTH_FILE), exist_ok=True)
+        with open(_OAUTH_FILE, "w", encoding="utf-8") as f:
+            json.dump({"clients": _clients, "tokens": _tokens}, f)
+    except Exception as e:
+        print(f"[warn] save_oauth failed: {e}")
+
+def _load_oauth() -> None:
+    try:
+        with open(_OAUTH_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _clients.update(data.get("clients", {}))
+        now = time.time()
+        _tokens.update({k: v for k, v in data.get("tokens", {}).items()
+                        if v.get("exp", 0) > now})
+        print(f"[info] oauth state loaded: {len(_clients)} clients, {len(_tokens)} tokens")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[warn] load_oauth failed: {e}")
+
+_load_oauth()
+
 # ── Persistence ───────────────────────────────────────────────────────────────
 _STATE_FILE = "/data/game_state.json"
 
@@ -1124,6 +1151,7 @@ async def oauth_register(req: Request):
     cid  = secrets.token_urlsafe(16)
     csec = secrets.token_urlsafe(32)
     _clients[cid] = {"client_secret": csec, "redirect_uris": body.get("redirect_uris", [])}
+    _save_oauth()
     return JSONResponse({
         "client_id": cid, "client_secret": csec,
         "client_id_issued_at": int(time.time()), "client_secret_expires_at": 0,
@@ -1171,8 +1199,9 @@ async def oauth_token(req: Request):
         if computed != cd["code_challenge"]:
             raise HTTPException(400, "invalid_grant: PKCE verification failed")
     tok = secrets.token_urlsafe(32)
-    _tokens[tok] = {"client_id": cd["client_id"], "exp": time.time() + 86400}
-    return {"access_token": tok, "token_type": "Bearer", "expires_in": 86400}
+    _tokens[tok] = {"client_id": cd["client_id"], "exp": time.time() + 30 * 86400}
+    _save_oauth()
+    return {"access_token": tok, "token_type": "Bearer", "expires_in": 30 * 86400}
 
 # ── MCP ────────────────────────────────────────────────────────────────────────
 @app.post("/mcp")
